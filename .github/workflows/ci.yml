@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, typecheck, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The root package.json pins pnpm via its `packageManager` field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      # Client tests resolve the @deepseek-ai/* sources through a harness
+      # checkout (docs/compatibility.md is the source of truth for the tag).
+      - name: Fetch the dsh harness sources
+        run: |
+          mkdir -p .tmp
+          git clone --depth 1 --branch dsh-v0.2.1-rc.2 \
+            https://github.com/deepseek-ai/deepseek-harness.git .tmp/dsh-harness
+
+      - name: Install harness dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .tmp/dsh-harness
+
+      - name: Test
+        run: DSH_HARNESS_ROOT=$PWD/.tmp/dsh-harness pnpm run test

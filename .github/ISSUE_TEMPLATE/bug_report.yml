@@ -1,0 +1,41 @@
+name: 🐞 Bug report
+description: Report a problem with the dsh-prompt-optimizer plugin
+labels: ['bug']
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description / 描述
+      description: What happened, and what did you expect? / 发生了什么？你期望的是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: dsh version / dsh 版本
+      placeholder: e.g. 0.2.1-rc.2
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version / 插件版本
+      placeholder: e.g. 0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / 日志
+      description: Console or host logs, if any. / 控制台或宿主日志（如有）。
+    validations:
+      required: false

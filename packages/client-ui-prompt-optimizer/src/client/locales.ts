@@ -1,0 +1,102 @@
+/** Locale-owned copy for the experimental prompt optimizer. */
+import type {} from '@deepseek-ai/dsh-client-ui-slots'
+/** Dictionary namespace for the optimize trigger and preview panel. */
+export const NS = 'prompt-optimizer'
+
+/** Chinese dictionary and key source. */
+export const zh = {
+  optimize: '优化',
+  optimizeDisabled: '输入内容后再优化',
+  optimizing: '优化中…',
+  roleLabel: '角色风格',
+  roleNone: '不指定角色',
+  roleUsed: '角色风格：{role}',
+  recommendRole: '推荐角色：{name}',
+  queueOptimize: '指定角色优化',
+  queueBadge: '队列项',
+  queueApply: '替换队列项',
+  previewTitle: '提示词优化',
+  original: '原始草稿',
+  optimized: '优化结果',
+  changes: '变更说明',
+  acceptanceMechanical: '{text}（命令核验：{command}）',
+  acceptanceLlm: '{text}（人工核验）',
+  runCheck: '运行核验',
+  verifying: '核验中…',
+  checkPassed: '通过',
+  checkFailed: '未通过',
+  critiqueItem: '评审修订：{text}',
+  optimizeAsSystem: '按系统提示词优化',
+  saveLibrary: '存入提示词库',
+  savedLibrary: '已入库',
+  saveLibraryError: '入库失败：{message}',
+  apply: '替换草稿',
+  regenerate: '换一版',
+  cancel: '取消',
+  failed: '优化失败：{message}',
+  emptyChanges: '无变更说明',
+  settingsDefaultRole: '默认角色',
+  settingsDefaultRoleHint: '未手动指定角色的优化请求按此角色成稿',
+  settingsReset: '清除',
+  settingsRoleUnavailableOption: '{role} — 已不存在',
+  settingsRolesUnavailable: '角色清单暂不可用；保存前请确认角色目录已配置。',
+  settingsUnavailable: '优化设置暂不可用。',
+  settingsReadOnly: '本部署的设置为只读。',
+  settingsSaveFailed: '本部署没有接受这些值，已保留供你修改。',
+  settingsSave: '保存',
+  settingsSaving: '保存中…',
+}
+
+/** Dictionary key of the prompt-optimizer locale namespace. */
+export type PromptOptimizerKey = keyof typeof zh
+
+/** English dictionary. */
+export const en: Record<PromptOptimizerKey, string> = {
+  optimize: 'Optimize',
+  optimizeDisabled: 'Type something to optimize',
+  optimizing: 'Optimizing…',
+  roleLabel: 'Role style',
+  roleNone: 'No role',
+  roleUsed: 'Role style: {role}',
+  recommendRole: 'Recommended role: {name}',
+  queueOptimize: 'Optimize with a role',
+  queueBadge: 'Queued item',
+  queueApply: 'Replace queued item',
+  previewTitle: 'Prompt optimization',
+  original: 'Original draft',
+  optimized: 'Optimized result',
+  changes: 'Changes',
+  acceptanceMechanical: '{text} (verify: `{command}`)',
+  acceptanceLlm: '{text} (judged)',
+  runCheck: 'Run check',
+  verifying: 'Verifying…',
+  checkPassed: 'Passed',
+  checkFailed: 'Failed',
+  critiqueItem: 'Critique: {text}',
+  optimizeAsSystem: 'Optimize as system prompt',
+  saveLibrary: 'Save to prompt library',
+  savedLibrary: 'Saved',
+  saveLibraryError: 'Save failed: {message}',
+  apply: 'Replace draft',
+  regenerate: 'Try again',
+  cancel: 'Cancel',
+  failed: 'Optimization failed: {message}',
+  emptyChanges: 'No change notes',
+  settingsDefaultRole: 'Default role',
+  settingsDefaultRoleHint: 'Optimization requests without a picked role are styled as this role',
+  settingsReset: 'Clear',
+  settingsRoleUnavailableOption: '{role} — no longer exists',
+  settingsRolesUnavailable: 'The role list is unavailable; confirm the roles directory is configured before saving.',
+  settingsUnavailable: 'Optimization settings are unavailable.',
+  settingsReadOnly: 'This deployment stores settings read-only.',
+  settingsSaveFailed: 'The deployment did not accept these values; they were left for you to correct.',
+  settingsSave: 'Save',
+  settingsSaving: 'Saving…',
+}
+
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface LocaleNamespaceMap {
+    /** Experimental draft-optimization trigger and preview panel. */
+    'prompt-optimizer': PromptOptimizerKey
+  }
+}

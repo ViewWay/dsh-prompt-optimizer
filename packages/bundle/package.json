@@ -1,0 +1,26 @@
+{
+  "name": "dsh-prompt-optimizer-bundle",
+  "description": "Profile bundle stacking the dsh-prompt-optimizer plugin family",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ViewWay/dsh-prompt-optimizer.git"
+  },
+  "homepage": "https://github.com/ViewWay/dsh-prompt-optimizer#readme",
+  "bugs": "https://github.com/ViewWay/dsh-prompt-optimizer/issues",
+  "type": "module",
+  "dependencies": {
+    "dsh-api-prompt-optimizer": "workspace:*",
+    "dsh-client-ui-prompt-optimizer": "workspace:*",
+    "dsh-prompt-optimizer": "workspace:*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "cordis.patch.yml"
+  ]
+}

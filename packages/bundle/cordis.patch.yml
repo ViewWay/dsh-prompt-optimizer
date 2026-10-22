@@ -1,0 +1,10 @@
+# The dsh-prompt-optimizer bundle patch: stacked over a base-backed profile
+# (`web`, `headless`, `sdk`, …). Later bundle patches and the user's own
+# profile cordis.patch.yml address rows by id.
+- insert:
+    - id: prompt-optimizer
+      name: 'dsh-prompt-optimizer'
+    - id: api-prompt-optimizer
+      name: 'dsh-api-prompt-optimizer'
+    - id: ui-prompt-optimizer
+      name: 'dsh-client-ui-prompt-optimizer'

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: DeepSeek Harness (dsh) issues
+    url: https://github.com/deepseek-ai/deepseek-harness/issues
+    about: Problems with the harness itself / 宿主 harness 自身的问题

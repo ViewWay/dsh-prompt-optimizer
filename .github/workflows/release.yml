@@ -1,0 +1,72 @@
+name: Publish to npm
+
+# Fires on a release tag (v*) push. All four packages must carry the tagged
+# version (the workflow verifies it) and stay in sync with each other.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build
+
+      # docs/compatibility.md is the source of truth for this tag.
+      - name: Fetch the dsh harness sources
+        run: |
+          mkdir -p .tmp
+          git clone --depth 1 --branch dsh-v0.2.1-rc.2 \
+            https://github.com/deepseek-ai/deepseek-harness.git .tmp/dsh-harness
+
+      - name: Install harness dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .tmp/dsh-harness
+
+      - name: Test
+        run: DSH_HARNESS_ROOT=$PWD/.tmp/dsh-harness pnpm run test
+
+      - name: Verify every package version matches the tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          FAIL=0
+          for pkg in packages/*/package.json; do
+            VER="v$(node -p "require('./$pkg').version")"
+            if [ "$TAG" != "$VER" ]; then
+              echo "::error::$pkg version $VER does not match tag $TAG"
+              FAIL=1
+            fi
+          done
+          exit $FAIL
+
+      # Publishes the four public packages in workspace dependency order
+      # (host -> api -> client -> bundle); the private root is skipped.
+      # Requires the NPM_TOKEN repository secret with publish rights.
+      - name: Publish all packages
+        run: pnpm -r publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

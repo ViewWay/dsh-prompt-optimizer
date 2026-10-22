@@ -1,0 +1,15 @@
+.trigger { width: 28px; padding: 0; flex: none; }
+.triggerAnchor { display: inline-flex; flex: none; align-items: center; gap: 4px; }
+.recommendRow { display: inline-flex; gap: 4px; }
+.recommendChip {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--dsw-alias-text-secondary);
+  background: var(--dsw-alias-fill-tertiary);
+  border: 1px solid var(--dsw-alias-border-subtle);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.recommendChip:hover { color: var(--dsw-alias-text-primary); }

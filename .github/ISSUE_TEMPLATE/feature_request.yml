@@ -1,0 +1,23 @@
+name: ✨ Feature request
+description: Suggest an idea for the dsh-prompt-optimizer plugin
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 问题
+      description: What are you trying to achieve? / 你想达成什么？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / 备选方案
+    validations:
+      required: false
