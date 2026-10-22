@@ -1,6 +1,6 @@
 /** Shared roles-listing hook for the preview panel's picker. */
 import { useEffect, useState } from 'react'
-import type { PromptRoleSummary } from 'dsh-prompt-optimizer/types'
+import type { PromptRoleSummary } from '@yimiliya/dsh-prompt-optimizer/types'
 
 /**
  * Load the host's selectable role definitions once per verb identity; a failing

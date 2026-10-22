@@ -1,7 +1,7 @@
 /** Authenticated, cancellation-aware Client access to draft optimization. */
 import { Context } from '@deepseek-ai/cordis'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type {} from 'dsh-prompt-optimizer'
+import type {} from '@yimiliya/dsh-prompt-optimizer'
 import type {
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
@@ -12,7 +12,7 @@ import type {
   PromptRoleSummary,
   PromptVerifyRequest,
   PromptVerifyResult,
-} from 'dsh-prompt-optimizer/types'
+} from '@yimiliya/dsh-prompt-optimizer/types'
 
 export type * from './types.ts'
 

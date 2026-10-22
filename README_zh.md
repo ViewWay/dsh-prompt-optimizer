@@ -31,7 +31,7 @@
 发布到 npm 后，在任意装有 dsh 的 profile 上：
 
 ```sh
-dsh plugin --profile web add dsh-prompt-optimizer-bundle
+dsh plugin --profile web add @yimiliya/dsh-prompt-optimizer-bundle
 ```
 
 bundle 会把 `prompt-optimizer`、`api-prompt-optimizer`、`ui-prompt-optimizer` 三个条目叠加进该 profile 的 `dsh.profile.bundles`。也可以在 Web 客户端的插件市场里安装。

@@ -1,7 +1,7 @@
 /** Remote forwarding: passthrough success, abort passthrough, typed failure wrap. */
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { PromptOptimizeResult } from 'dsh-prompt-optimizer/types'
+import type { PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
 import PromptOptimizerController from '../src/index.ts'
 
 const roots: Context[] = []

@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, IconCheckOutlineRegular, IconCloseOutlineRegular, IconRefreshOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PromptRoleSummary, PromptVerifyResult } from 'dsh-prompt-optimizer/types'
+import type { PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
 import type { PromptOptimizationPreview, OptimizationSnapshot } from './optimization.ts'
 import { usePromptRoles } from './use-prompt-roles.ts'
 import css from './PreviewPanel.module.css'

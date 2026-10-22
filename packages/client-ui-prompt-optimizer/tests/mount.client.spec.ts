@@ -4,7 +4,7 @@ import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { RemoteError, type TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
-import type {} from 'dsh-api-prompt-optimizer/types'
+import type {} from '@yimiliya/dsh-api-prompt-optimizer/types'
 import { expect, it, vi } from 'vitest'
 import { mountPromptOptimizer, inject } from '../src/client/mount.ts'
 import { apply as hostApply } from '../src/index.ts'
@@ -13,7 +13,7 @@ import { PreviewPanel } from '../src/client/PreviewPanel.tsx'
 import type { OptimizationSnapshot, OptimizationState } from '../src/client/optimization.ts'
 
 const REMOTE: TypertRemoteContribution = {
-  package: 'dsh-api-prompt-optimizer',
+  package: '@yimiliya/dsh-api-prompt-optimizer',
   descriptors: [],
 }
 const SESSION = 'session-1' as SessionId

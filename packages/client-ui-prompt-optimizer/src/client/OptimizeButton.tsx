@@ -6,7 +6,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   PromptRoleRecommendation,
   PromptRoleSummary,
-} from 'dsh-prompt-optimizer/types'
+} from '@yimiliya/dsh-prompt-optimizer/types'
 import type { OptimizationSnapshot, QueueItemId } from './optimization.ts'
 import css from './OptimizeButton.module.css'
 

@@ -2,7 +2,7 @@
  * Public request, result, and log-event contracts for the experimental
  * prompt optimizer. Wire-safe plain data only: the Remote controller and the
  * browser client both consume these shapes unchanged.
- * @module dsh-prompt-optimizer/types
+ * @module @yimiliya/dsh-prompt-optimizer/types
  */
 
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'

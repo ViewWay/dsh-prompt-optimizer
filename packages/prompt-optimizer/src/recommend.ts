@@ -3,7 +3,7 @@
  * context (draft plus queued inbox text) and each role definition. No model
  * call — the same context always yields the same ranking, so the
  * recommendation is auditable and free.
- * @module dsh-prompt-optimizer
+ * @module @yimiliya/dsh-prompt-optimizer
  */
 
 import type { PromptRoleRef } from './meta-prompt.ts'

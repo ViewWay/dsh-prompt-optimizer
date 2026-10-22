@@ -2,14 +2,14 @@
  * Per-session optimization state: the store one mount shares with the
  * composer trigger and the preview panel, plus the pending-interaction
  * carrier that elects the panel into the composer seat.
- * @module dsh-client-ui-prompt-optimizer/client
+ * @module @yimiliya/dsh-client-ui-prompt-optimizer/client
  */
 
 import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SessionPendingInteractionBase } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { PromptOptimizeResult } from 'dsh-prompt-optimizer/types'
+import type { PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
 
 /** Identity of one pending queue item the round may rewrite in place. */
 export type QueueItemId = InputState['queue'][number]['id']

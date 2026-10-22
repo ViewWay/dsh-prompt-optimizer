@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bindSnapshotSelector, stubConfigForm } from '@deepseek-ai/dsh-client-test-runtime'
-import type { PromptOptimizerSettings as PromptOptimizerSettingsSection } from 'dsh-prompt-optimizer/types'
+import type { PromptOptimizerSettings as PromptOptimizerSettingsSection } from '@yimiliya/dsh-prompt-optimizer/types'
 import { PromptOptimizerSettingsForm } from '../src/client/settings-form.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { InputActions, InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -14,7 +14,7 @@ import { PromptOptimizerSettings, type PromptOptimizerSettingsProps } from '../s
 import { createOptimizationStore, PromptOptimizationPreview, type OptimizationSnapshot, type OptimizationState } from '../src/client/optimization.ts'
 import { zh } from '../src/client/locales.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
-import type { PromptOptimizeResult } from 'dsh-prompt-optimizer/types'
+import type { PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
 
 const SESSION = 'session-1' as SessionId
 const t: OptimizeButtonProps['t'] = (key, params) => {

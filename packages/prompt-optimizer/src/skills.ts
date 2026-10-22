@@ -3,7 +3,7 @@
  * keyword overlap between the request context (draft plus queued inbox text)
  * and each model-invocable skill's routing text. No model call — the same
  * context always yields the same hints, mirroring {@link recommendRoles}.
- * @module dsh-prompt-optimizer
+ * @module @yimiliya/dsh-prompt-optimizer
  */
 
 import { isModelInvocable } from '@deepseek-ai/dsh-skill'

@@ -150,7 +150,7 @@ const _verify_parameter_0_strict = () => (_verify_parameter_0_strict$value ??= z
 }))
 
 export const TYPERT_REMOTE = createTypertRemoteInfo({
-  package: 'dsh-api-prompt-optimizer',
+  package: '@yimiliya/dsh-api-prompt-optimizer',
   methods: {
     'promptOptimizer/listPrompts': {
       service: 'promptOptimizerController',
@@ -160,7 +160,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       cancellation: { parameter: 'signal' },
       result: {
         mode: 'strict',
-        typeSymbol: 'dsh-api-prompt-optimizer#promptOptimizer/listPrompts:result',
+        typeSymbol: '@yimiliya/dsh-api-prompt-optimizer#promptOptimizer/listPrompts:result',
         create: _v0,
         description: 'at most the service\'s entry cap of persisted prompts.',
         jsonSchema: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' }, createdAt: { type: 'string' }, sourceSessionId: { type: 'string' } }, required: ['id', 'title', 'text', 'createdAt', 'sourceSessionId'], additionalProperties: true } },
@@ -175,7 +175,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       cancellation: { parameter: 'signal' },
       result: {
         mode: 'strict',
-        typeSymbol: 'dsh-api-prompt-optimizer#promptOptimizer/listRoles:result',
+        typeSymbol: '@yimiliya/dsh-api-prompt-optimizer#promptOptimizer/listRoles:result',
         create: _v1,
         description: 'every role summary the directory holds, sorted by slug.',
         jsonSchema: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } }, required: ['id', 'name'], additionalProperties: true } },
@@ -193,13 +193,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
           source: 'json',
           codec: {
             mode: 'strict',
-            typeSymbol: 'dsh-prompt-optimizer/types#PromptOptimizeRequest',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0,
             jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' } }, required: ['sessionId', 'text'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
-            typeSymbol: 'dsh-prompt-optimizer/types#PromptOptimizeRequest',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0_strict,
             jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' } }, required: ['sessionId', 'text'], additionalProperties: false },
           },
@@ -208,7 +208,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       cancellation: { parameter: 'signal' },
       result: {
         mode: 'strict',
-        typeSymbol: 'dsh-prompt-optimizer/types#PromptOptimizeResult',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeResult',
         create: _optimize_result,
         description: 'the parsed optimization result for preview.',
         jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
@@ -226,13 +226,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
           source: 'json',
           codec: {
             mode: 'strict',
-            typeSymbol: 'dsh-prompt-optimizer/types#PromptRoleRecommendRequest',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptRoleRecommendRequest',
             create: _recommendRoles_parameter_0,
             jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' } }, required: ['sessionId'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
-            typeSymbol: 'dsh-prompt-optimizer/types#PromptRoleRecommendRequest',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptRoleRecommendRequest',
             create: _recommendRoles_parameter_0_strict,
             jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' } }, required: ['sessionId'], additionalProperties: false },
           },
@@ -241,7 +241,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       cancellation: { parameter: 'signal' },
       result: {
         mode: 'strict',
-        typeSymbol: 'dsh-api-prompt-optimizer#promptOptimizer/recommendRoles:result',
+        typeSymbol: '@yimiliya/dsh-api-prompt-optimizer#promptOptimizer/recommendRoles:result',
         create: _recommendRoles_result,
         description: 'at most three ranked role recommendations.',
         jsonSchema: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, score: { type: 'number' }, matched: { type: 'array', items: { type: 'string' } } }, required: ['id', 'name', 'score', 'matched'], additionalProperties: true } },
@@ -259,13 +259,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
           source: 'json',
           codec: {
             mode: 'strict',
-            typeSymbol: 'dsh-prompt-optimizer/types#PromptLibrarySaveRequest',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptLibrarySaveRequest',
             create: _savePrompt_parameter_0,
             jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' } }, required: ['sessionId', 'title', 'text'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
-            typeSymbol: 'dsh-prompt-optimizer/types#PromptLibrarySaveRequest',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptLibrarySaveRequest',
             create: _savePrompt_parameter_0_strict,
             jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' } }, required: ['sessionId', 'title', 'text'], additionalProperties: false },
           },
@@ -274,7 +274,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       cancellation: { parameter: 'signal' },
       result: {
         mode: 'strict',
-        typeSymbol: 'dsh-prompt-optimizer/types#PromptLibraryEntry',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptLibraryEntry',
         create: _savePrompt_result,
         description: 'the persisted library entry.',
         jsonSchema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' }, createdAt: { type: 'string' }, sourceSessionId: { type: 'string' } }, required: ['id', 'title', 'text', 'createdAt', 'sourceSessionId'], additionalProperties: true },
@@ -292,13 +292,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
           source: 'json',
           codec: {
             mode: 'strict',
-            typeSymbol: 'dsh-prompt-optimizer/types#PromptVerifyRequest',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptVerifyRequest',
             create: _verify_parameter_0,
             jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, criterion: { type: 'string' }, command: { type: 'string' } }, required: ['sessionId', 'criterion', 'command'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
-            typeSymbol: 'dsh-prompt-optimizer/types#PromptVerifyRequest',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptVerifyRequest',
             create: _verify_parameter_0_strict,
             jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, criterion: { type: 'string' }, command: { type: 'string' } }, required: ['sessionId', 'criterion', 'command'], additionalProperties: false },
           },
@@ -307,7 +307,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       cancellation: { parameter: 'signal' },
       result: {
         mode: 'strict',
-        typeSymbol: 'dsh-prompt-optimizer/types#PromptVerifyResult',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptVerifyResult',
         create: _verify_result,
         description: 'the command\'s exit status and truncated output.',
         jsonSchema: { type: 'object', properties: { passed: { type: 'boolean' }, exitCode: { oneOf: [{ type: 'null', const: null }, { type: 'number' }] }, timedOut: { type: 'boolean' }, output: { type: 'string' }, durationMs: { type: 'number' } }, required: ['passed', 'exitCode', 'timedOut', 'output', 'durationMs'], additionalProperties: true },

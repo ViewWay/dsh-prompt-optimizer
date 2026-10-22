@@ -54,19 +54,19 @@ importers:
       '@types/node':
         specifier: ^24
         version: 24.19.2
-      dsh-prompt-optimizer:
+      '@yimiliya/dsh-prompt-optimizer':
         specifier: workspace:*
         version: link:../prompt-optimizer
 
   packages/bundle:
     dependencies:
-      dsh-api-prompt-optimizer:
+      '@yimiliya/dsh-api-prompt-optimizer':
         specifier: workspace:*
         version: link:../api-prompt-optimizer
-      dsh-client-ui-prompt-optimizer:
+      '@yimiliya/dsh-client-ui-prompt-optimizer':
         specifier: workspace:*
         version: link:../client-ui-prompt-optimizer
-      dsh-prompt-optimizer:
+      '@yimiliya/dsh-prompt-optimizer':
         specifier: workspace:*
         version: link:../prompt-optimizer
 
@@ -126,10 +126,10 @@ importers:
       '@types/react':
         specifier: ^18
         version: 18.3.31
-      dsh-api-prompt-optimizer:
+      '@yimiliya/dsh-api-prompt-optimizer':
         specifier: workspace:*
         version: link:../api-prompt-optimizer
-      dsh-prompt-optimizer:
+      '@yimiliya/dsh-prompt-optimizer':
         specifier: workspace:*
         version: link:../prompt-optimizer
       react:

@@ -2,7 +2,7 @@
  * Experimental draft-prompt optimization: one meta-prompted LLM rewrite per
  * request, logged as `prompt-optimizer/llm-request` before dispatch. The
  * service never touches the loop; the Remote consumer owns the draft.
- * @module dsh-prompt-optimizer
+ * @module @yimiliya/dsh-prompt-optimizer
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'

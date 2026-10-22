@@ -10,5 +10,5 @@
 ## Install / 安装
 
 ```sh
-dsh plugin --profile web update dsh-prompt-optimizer-bundle@latest
+dsh plugin --profile web update @yimiliya/dsh-prompt-optimizer-bundle@latest
 ```

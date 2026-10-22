@@ -2,7 +2,7 @@
  * Wire contracts for the experimental prompt-optimizer Remote. The shapes are
  * owned by the capability package; this module re-exports them so the Remote
  * surface and the client generation share one home per fact.
- * @module dsh-api-prompt-optimizer/types
+ * @module @yimiliya/dsh-api-prompt-optimizer/types
  */
 
 import type {} from '@deepseek-ai/dsh-typert-protocol'
@@ -31,4 +31,4 @@ export type {
   PromptRoleSummary,
   PromptVerifyRequest,
   PromptVerifyResult,
-} from 'dsh-prompt-optimizer/types'
+} from '@yimiliya/dsh-prompt-optimizer/types'

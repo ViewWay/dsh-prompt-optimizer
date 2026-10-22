@@ -31,7 +31,7 @@ A standalone, independently distributed plugin family for the DeepSeek Harness t
 Once published to npm, on any profile that has dsh installed:
 
 ```sh
-dsh plugin --profile web add dsh-prompt-optimizer-bundle
+dsh plugin --profile web add @yimiliya/dsh-prompt-optimizer-bundle
 ```
 
 The bundle stacks `prompt-optimizer`, `api-prompt-optimizer` and `ui-prompt-optimizer` into that profile's `dsh.profile.bundles`. You can also install it from the web client's plugin marketplace.

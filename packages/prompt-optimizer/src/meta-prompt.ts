@@ -5,7 +5,7 @@
  * {@link AC_MARKER}; domain priors condition the system prompt on the draft's
  * technical domain, distilling the role-library idea of the FlowPilot project
  * navigation workflow into per-domain question lists.
- * @module dsh-prompt-optimizer
+ * @module @yimiliya/dsh-prompt-optimizer
  */
 
 import type { SkillHint } from './skills.ts'

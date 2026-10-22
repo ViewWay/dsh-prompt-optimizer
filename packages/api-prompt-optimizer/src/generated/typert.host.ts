@@ -4,7 +4,7 @@
 import { TYPERT_REMOTE } from './typert.remote-client.ts'
 
 export const TYPERT = {
-  package: 'dsh-api-prompt-optimizer',
+  package: '@yimiliya/dsh-api-prompt-optimizer',
   face: 'host',
   schemas: [],
   get invocations() { return TYPERT_REMOTE.descriptors },

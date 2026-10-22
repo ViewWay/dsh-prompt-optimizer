@@ -3,8 +3,8 @@
 # profile cordis.patch.yml address rows by id.
 - insert:
     - id: prompt-optimizer
-      name: 'dsh-prompt-optimizer'
+      name: '@yimiliya/dsh-prompt-optimizer'
     - id: api-prompt-optimizer
-      name: 'dsh-api-prompt-optimizer'
+      name: '@yimiliya/dsh-api-prompt-optimizer'
     - id: ui-prompt-optimizer
-      name: 'dsh-client-ui-prompt-optimizer'
+      name: '@yimiliya/dsh-client-ui-prompt-optimizer'

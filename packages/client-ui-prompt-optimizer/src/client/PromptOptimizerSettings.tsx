@@ -1,7 +1,7 @@
 /** Default-role configuration on the plugin bundle's page. */
 import { useEffect, useId, useState } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import type { PromptRoleSummary } from 'dsh-prompt-optimizer/types'
+import type { PromptRoleSummary } from '@yimiliya/dsh-prompt-optimizer/types'
 import { Button, SettingsForm, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS } from './locales.ts'

@@ -1,5 +1,5 @@
 {
-  "name": "dsh-prompt-optimizer-bundle",
+  "name": "@yimiliya/dsh-prompt-optimizer-bundle",
   "description": "Profile bundle stacking the dsh-prompt-optimizer plugin family",
   "version": "0.1.0",
   "license": "Apache-2.0",
@@ -11,9 +11,9 @@
   "bugs": "https://github.com/ViewWay/dsh-prompt-optimizer/issues",
   "type": "module",
   "dependencies": {
-    "dsh-api-prompt-optimizer": "workspace:*",
-    "dsh-client-ui-prompt-optimizer": "workspace:*",
-    "dsh-prompt-optimizer": "workspace:*"
+    "@yimiliya/dsh-api-prompt-optimizer": "workspace:*",
+    "@yimiliya/dsh-client-ui-prompt-optimizer": "workspace:*",
+    "@yimiliya/dsh-prompt-optimizer": "workspace:*"
   },
   "dsh": {
     "bundle": {

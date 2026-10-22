@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
-import type {} from 'dsh-api-prompt-optimizer/remote'
+import type {} from '@yimiliya/dsh-api-prompt-optimizer/remote'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
@@ -16,7 +16,7 @@ import type {
   PromptRoleRecommendation,
   PromptRoleSummary,
   PromptVerifyResult,
-} from 'dsh-prompt-optimizer/types'
+} from '@yimiliya/dsh-prompt-optimizer/types'
 import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import { OptimizeButton } from './OptimizeButton.tsx'
 import { PreviewPanel } from './PreviewPanel.tsx'
@@ -266,7 +266,7 @@ function registerUi(ctx: Context): void {
   ctx.effect(() => () => { settingsForm.dispose() }, 'prompt optimizer: settings form')
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register(
     {
-      name: 'plugins.bundle.config', key: 'dsh-prompt-optimizer-bundle',
+      name: 'plugins.bundle.config', key: '@yimiliya/dsh-prompt-optimizer-bundle',
       locale: NS, inject: () => ({ ...settingsForm.inject(), loadRoles: actions.loadRoles }),
     },
     PromptOptimizerSettings,
