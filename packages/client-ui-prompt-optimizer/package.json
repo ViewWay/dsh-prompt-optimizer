@@ -1,7 +1,7 @@
 {
   "name": "@yimiliya/dsh-client-ui-prompt-optimizer",
   "description": "Browser UI for dsh-prompt-optimizer: trigger, preview panel, queue entries, settings",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
