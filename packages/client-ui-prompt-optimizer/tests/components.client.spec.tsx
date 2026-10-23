@@ -374,6 +374,126 @@ describe('PreviewPanel', () => {
     expect(select.hasAttribute('disabled')).toBe(true)
   })
 
+  /** Roles-heavy listing: the first two are architects, the rest are plain workers. */
+  function burstRoles(count: number): { id: string; name: string }[] {
+    return Array.from({ length: count }, (_, index) => index < 2
+      ? { id: `sys-architect-${index}`, name: `架构师${index}` }
+      : { id: `dev-worker-${index}`, name: `码农${index}` })
+  }
+
+  // jsdom's .focus() dispatches no event; React's onFocus listens for bubbled focusin.
+  function focusInput(input: HTMLElement): void {
+    fireEvent(input, new window.FocusEvent('focusin', { bubbles: true }))
+  }
+
+  it('keeps the native select at exactly the threshold of 60 roles', async () => {
+    const loadRoles = vi.fn(async () => burstRoles(60))
+    render(<PreviewPanel {...panelProps(READY, { loadRoles })} />)
+    const select = await waitFor(() => screen.getByLabelText(zh.roleLabel))
+    expect(select.tagName).toBe('SELECT')
+    expect(screen.getAllByRole('option')).toHaveLength(61)
+  })
+
+  it('swaps to the filterable picker past 60 roles and narrows by name or slug', async () => {
+    const loadRoles = vi.fn(async () => burstRoles(61))
+    render(<PreviewPanel {...panelProps(READY, { loadRoles })} />)
+    const input = await waitFor(() => screen.getByLabelText(zh.roleLabel))
+    expect(input.tagName).toBe('INPUT')
+    focusInput(input)
+    expect(screen.getAllByRole('option')).toHaveLength(62)
+    fireEvent.change(input, { target: { value: 'ARCHITECT-1' } })
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['架构师1'])
+    fireEvent.change(input, { target: { value: '架构师' } })
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['架构师0', '架构师1'])
+    fireEvent.change(input, { target: { value: '' } })
+    expect(screen.getAllByRole('option')).toHaveLength(62)
+    fireEvent.change(input, { target: { value: '架构师' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect((input as HTMLInputElement).value).toBe('')
+    expect(screen.getAllByRole('option')).toHaveLength(62)
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('option')).toBeNull()
+  })
+
+  it('moves the active option with arrows and commits it with Enter', async () => {
+    const regenerateAsRole = vi.fn()
+    const loadRoles = vi.fn(async () => burstRoles(61))
+    render(<PreviewPanel {...panelProps(READY, { regenerateAsRole, loadRoles })} />)
+    const input = await waitFor(() => screen.getByLabelText(zh.roleLabel))
+    fireEvent.change(input, { target: { value: 'architect' } })
+    const narrowed = screen.getAllByRole('option')
+    expect(narrowed).toHaveLength(2)
+    expect(narrowed[0].getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(screen.getAllByRole('option')[1].getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(input, { key: 'ArrowUp' })
+    expect(screen.getAllByRole('option')[0].getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(regenerateAsRole).toHaveBeenCalledExactlyOnceWith(SESSION, 'sys-architect-1')
+  })
+
+  it('keeps the no-role entry reachable and maps it to undefined', async () => {
+    const regenerateAsRole = vi.fn()
+    const loadRoles = vi.fn(async () => burstRoles(61))
+    render(<PreviewPanel {...panelProps(READY, { regenerateAsRole, loadRoles })} />)
+    const input = await waitFor(() => screen.getByLabelText(zh.roleLabel))
+    focusInput(input)
+    const options = screen.getAllByRole('option')
+    expect(options[0].textContent).toBe(zh.roleNone)
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    expect(screen.getAllByRole('option')[0].getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(regenerateAsRole).toHaveBeenCalledExactlyOnceWith(SESSION, undefined)
+  })
+
+  it('picks a filtered role with the mouse without losing the list to blur', async () => {
+    const regenerateAsRole = vi.fn()
+    const loadRoles = vi.fn(async () => burstRoles(61))
+    render(<PreviewPanel {...panelProps(READY, { regenerateAsRole, loadRoles })} />)
+    const input = await waitFor(() => screen.getByLabelText(zh.roleLabel))
+    fireEvent.change(input, { target: { value: 'dev-worker-7' } })
+    fireEvent.mouseDown(screen.getAllByRole('option')[0])
+    expect(regenerateAsRole).toHaveBeenCalledExactlyOnceWith(SESSION, 'dev-worker-7')
+  })
+
+  it('disables the filterable picker while a round is running', async () => {
+    const running: OptimizationState = { phase: 'running', draft: 'd', previousAttempts: [], role: undefined, result: undefined, error: undefined, apply: () => {} }
+    const loadRoles = vi.fn(async () => burstRoles(61))
+    render(<PreviewPanel {...panelProps(running, { loadRoles })} />)
+    const input = await waitFor(() => screen.getByLabelText(zh.roleLabel))
+    expect(input.tagName).toBe('INPUT')
+    expect(input.hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByRole('option')).toBeNull()
+  })
+
+  it('ignores picker keys while an IME composition confirms its candidate', async () => {
+    const regenerateAsRole = vi.fn()
+    const loadRoles = vi.fn(async () => burstRoles(61))
+    render(<PreviewPanel {...panelProps(READY, { regenerateAsRole, loadRoles })} />)
+    const input = await waitFor(() => screen.getByLabelText(zh.roleLabel))
+    fireEvent.change(input, { target: { value: '架构师' } })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(regenerateAsRole).not.toHaveBeenCalled()
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(regenerateAsRole).toHaveBeenCalledExactlyOnceWith(SESSION, 'sys-architect-1')
+  })
+
+  it('renders a disabled empty-state row when nothing matches the filter', async () => {
+    const loadRoles = vi.fn(async () => burstRoles(61))
+    render(<PreviewPanel {...panelProps(READY, { loadRoles })} />)
+    const input = await waitFor(() => screen.getByLabelText(zh.roleLabel))
+    fireEvent.change(input, { target: { value: 'zzz-no-such-role' } })
+    const empty = screen.getByRole('option')
+    expect(empty.textContent).toBe(zh.roleNoMatches)
+    expect(empty.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(screen.getByRole('option').textContent).toBe(zh.roleNoMatches)
+  })
+
   it('omits the changes list and notes its absence for a note-free result', () => {
     render(<PreviewPanel {...panelProps({ ...READY, result: { ...RESULT, changes: [] } })} />)
     expect(screen.queryByTestId('optimization-changes')).toBeNull()

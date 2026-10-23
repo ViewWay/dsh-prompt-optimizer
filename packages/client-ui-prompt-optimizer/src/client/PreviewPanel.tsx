@@ -5,6 +5,7 @@ import { Button, IconCheckOutlineRegular, IconCloseOutlineRegular, IconRefreshOu
 import type { PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
 import type { PromptOptimizationPreview, OptimizationSnapshot } from './optimization.ts'
 import { usePromptRoles } from './use-prompt-roles.ts'
+import { RoleSelector } from './RoleSelector.tsx'
 import css from './PreviewPanel.module.css'
 
 /** Host verbs injected by the mount; each takes the Session whose preview is open. */
@@ -159,19 +160,15 @@ export function PreviewPanel(props: PreviewPanelProps) {
             ? <span className={css.roleBadge} data-testid="optimization-queue">{t('queueBadge')}</span>
             : null}
           {roles.length > 0
-            ? <select
-              className={css.roleSelect}
-              data-testid="optimization-role"
-              aria-label={t('roleLabel')}
-              value={state.role ?? ''}
+            ? <RoleSelector
+              roles={roles}
+              selected={state.role}
               disabled={state.phase === 'running'}
-              onChange={(event) => {
-                regenerateAsRole(matched.sessionId, event.target.value === '' ? undefined : event.target.value)
-              }}
-            >
-              <option value="">{t('roleNone')}</option>
-              {roles.map(summary => <option key={summary.id} value={summary.id}>{summary.name}</option>)}
-            </select>
+              label={t('roleLabel')}
+              noneLabel={t('roleNone')}
+              noMatchesLabel={t('roleNoMatches')}
+              onPick={(role) => { regenerateAsRole(matched.sessionId, role) }}
+            />
             : state.role !== undefined
               ? <span className={css.roleBadge} data-testid="optimization-role">{t('roleUsed', { role: state.role })}</span>
               : null}
