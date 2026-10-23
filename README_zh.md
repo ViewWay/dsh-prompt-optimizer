@@ -17,14 +17,14 @@
 
 ## 仓库布局
 
-| 包 | 作用 |
-| --- | --- |
-| `packages/prompt-optimizer` | Host 服务：优化轮次、角色库、技能提示、模型路由 |
-| `packages/api-prompt-optimizer` | Remote 控制器与 Typert 描述符（host/client 共享方法表） |
-| `packages/client-ui-prompt-optimizer` | 浏览器 UI：触发按钮、预览面板、队列入口、设置页 |
-| `packages/bundle` | Profile bundle（`cordis.patch.yml`），一次安装叠加全部三个插件 |
+| 包 | npm | 作用 |
+| --- | --- | --- |
+| `packages/prompt-optimizer` | [@yimiliya/dsh-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer) | Host 服务：优化轮次、角色库、技能提示、模型路由 |
+| `packages/api-prompt-optimizer` | [@yimiliya/dsh-api-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-api-prompt-optimizer) | Remote 控制器与 Typert 描述符（host/client 共享方法表） |
+| `packages/client-ui-prompt-optimizer` | [@yimiliya/dsh-client-ui-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-client-ui-prompt-optimizer) | 浏览器 UI：触发按钮、预览面板、队列入口、设置页 |
+| `packages/bundle` | [@yimiliya/dsh-prompt-optimizer-bundle](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer-bundle) | Profile bundle（`cordis.patch.yml`），一次安装叠加全部三个插件 |
 
-`tools/tsdown.client.ts` 是独立版客户端打包预设：按 harness 的 `window.__ModuleLoader__.load({id, factory})` 契约产出浏览器闭包工件，CSS Modules 经 lightningcss 编译为自带样式的注入模块。
+每个包都带有自己的 README（会展示在其 npm 包页上）；本文档是全家桶视角。`tools/tsdown.client.ts` 是独立版客户端打包预设：按 harness 的 `window.__ModuleLoader__.load({id, factory})` 契约产出浏览器闭包工件，CSS Modules 经 lightningcss 编译为自带样式的注入模块。
 
 ## 安装（用户）
 
@@ -81,7 +81,7 @@ pnpm run build      # tsdown，按依赖顺序
 
 ## 发布（维护者）
 
-四个包保持版本一致。打 tag（`git tag v0.1.0 && git push --tags`）后，GitHub Actions 会按依赖顺序（host → api → client → bundle）构建、检查并把四个包发布到 npm。见 `.github/workflows/release.yml`。
+四个包保持版本一致。打 tag（`git tag vX.Y.Z && git push origin vX.Y.Z`）后，GitHub Actions 会按依赖顺序（host → api → client → bundle）构建、检查并把四个包发布到 npm。见 `.github/workflows/release.yml`。
 
 ## 许可证
 

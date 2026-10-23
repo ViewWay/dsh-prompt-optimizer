@@ -17,14 +17,14 @@ A standalone, independently distributed plugin family for the DeepSeek Harness t
 
 ## Repository layout
 
-| Package | Purpose |
-| --- | --- |
-| `packages/prompt-optimizer` | Host service: optimization rounds, role library, skill hints, model routing |
-| `packages/api-prompt-optimizer` | Remote controller and Typert descriptors (host/client shared method table) |
-| `packages/client-ui-prompt-optimizer` | Browser UI: trigger button, preview panel, queue entries, settings page |
-| `packages/bundle` | Profile bundle (`cordis.patch.yml`) that installs all three plugins in one shot |
+| Package | npm | Purpose |
+| --- | --- | --- |
+| `packages/prompt-optimizer` | [@yimiliya/dsh-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer) | Host service: optimization rounds, role library, skill hints, model routing |
+| `packages/api-prompt-optimizer` | [@yimiliya/dsh-api-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-api-prompt-optimizer) | Remote controller and Typert descriptors (host/client shared method table) |
+| `packages/client-ui-prompt-optimizer` | [@yimiliya/dsh-client-ui-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-client-ui-prompt-optimizer) | Browser UI: trigger button, preview panel, queue entries, settings page |
+| `packages/bundle` | [@yimiliya/dsh-prompt-optimizer-bundle](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer-bundle) | Profile bundle (`cordis.patch.yml`) that installs all three plugins in one shot |
 
-`tools/tsdown.client.ts` is the standalone client build preset: it emits browser closure artifacts against the harness `window.__ModuleLoader__.load({id, factory})` contract, with CSS Modules compiled by lightningcss into self-contained injected styles.
+Each package carries its own README, which npm renders on the package page; this document is the family-level view. `tools/tsdown.client.ts` is the standalone client build preset: it emits browser closure artifacts against the harness `window.__ModuleLoader__.load({id, factory})` contract, with CSS Modules compiled by lightningcss into self-contained injected styles.
 
 ## Installation (users)
 
@@ -81,7 +81,7 @@ The supported baseline is `@deepseek-ai/dsh-*` `0.2.1-rc.2`; earlier versions ar
 
 ## Releasing (maintainers)
 
-Keep the four packages on one version. Tag a release (`git tag v0.1.0 && git push --tags`) and GitHub Actions builds, checks and publishes all four packages to npm in dependency order (host → api → client → bundle). See `.github/workflows/release.yml`.
+Keep the four packages on one version. Tag a release (`git tag vX.Y.Z && git push origin vX.Y.Z`) and GitHub Actions builds, checks and publishes all four packages to npm in dependency order (host → api → client → bundle). See `.github/workflows/release.yml`.
 
 ## License
 
