@@ -24,7 +24,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { FileSystem, FsDirEntry } from '@deepseek-ai/dsh-fs'
-import type { SkillSummary } from '@deepseek-ai/dsh-skill'
+import type { SkillRegistry, SkillSummary } from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-session-projection'
@@ -53,7 +53,7 @@ import {
 } from './meta-prompt.ts'
 import type { PromptRoleRef, RoundConditioning } from './meta-prompt.ts'
 import { recommendRoles as rankRoles } from './recommend.ts'
-import { selectSkillHints } from './skills.ts'
+import { enrichSkillHint, MAX_DETAIL_HINTS, selectSkillHints } from './skills.ts'
 import type { SkillHint } from './skills.ts'
 
 export type * from './types.ts'
@@ -758,7 +758,36 @@ export default class PromptOptimizer extends Service {
       if (isTypedFailure(error)) throw error
       fail('PROMPT_OPTIMIZER_SKILLS_READ_FAILED', `prompt-optimizer: the skill registry could not be listed: ${error instanceof Error ? error.message : String(error)}`)
     }
-    return selectSkillHints(context, skills)
+    return this.detailSkillHints(registry, selectSkillHints(context, skills), cwd, signal)
+  }
+
+  /**
+    * Deep-read the top-ranked hints through the skill registry and enrich
+    * each with its definition's parameter descriptors and body digest; the
+    * remaining hints stay summary-only. Best-effort: a definition that fails
+    * to load keeps its summary-only hint rather than failing the round.
+    * @param registry - the composed skill registry the hints were listed from.
+    * @param hints - ranked hints from {@link selectSkillHints}.
+    * @param cwd - the session's working directory passed through to the registry.
+    * @param signal - caller cancellation.
+    * @returns the hints with at most {@link MAX_DETAIL_HINTS} entries enriched.
+    */
+  private async detailSkillHints(
+    registry: Pick<SkillRegistry, 'get'>,
+    hints: readonly SkillHint[],
+    cwd: string | undefined,
+    signal: AbortSignal,
+  ): Promise<readonly SkillHint[]> {
+    const enriched = [...hints]
+    for (const [index, hint] of hints.slice(0, MAX_DETAIL_HINTS).entries()) {
+      try {
+        const definition = await registry.get(hint.name, { ...(cwd !== undefined ? { cwd } : {}), signal })
+        if (definition !== undefined) enriched[index] = enrichSkillHint(hint, definition)
+      } catch {
+        signal.throwIfAborted()
+      }
+    }
+    return enriched
   }
 
   /**

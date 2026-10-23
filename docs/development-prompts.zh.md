@@ -28,19 +28,20 @@
 ## P2 技能感知优化（skillAware）维护与扩展
 
 ```text
-任务：理解并扩展 prompt-optimizer 的技能感知能力；本次目标是在提示词中引用技能时同时带上技能的参数占位（若技能声明了参数）。
+任务：理解并维护 prompt-optimizer 的技能感知（skillAware）能力——本任务落地三件套：参数占位、top 命中深读、来源标注。
 
 背景：
-- 现状：packages/prompt-optimizer/src/skills.ts 的 selectSkillHints(context, skills) 用确定性关键词重叠打分（技能名权重×3、简介×1，阈值 MIN_SKILL_SCORE=2，至多 12 条，简介截 160 字），只保留可被模型调用的技能；src/meta-prompt.ts 的 skillBlock() 把命中技能拼进元提示词，并带防幻觉约束（只允许引用列出技能的精确名称，禁止编造技能名）。src/index.ts 的 resolveSkillHints 在 skillAware=true 但无技能注册表时按类型化错误 fail loud。
-- 配置项 skillAware（默认 true）在 cordis.yml 的 plugins > config > prompt-optimizer 下。
+- 选型：packages/prompt-optimizer/src/skills.ts 的 selectSkillHints(context, skills) 用确定性关键词重叠打分（技能名权重×3、简介×1，阈值 MIN_SKILL_SCORE=2，至多 12 条，简介截 160 字），只保留可被模型调用的技能；每条 hint 经 sourceLabelOf() 标注粗粒度来源（project-dsh/project-agents→project、user-dsh/user-agents→user、bundled、runtime，其余→custom）。
+- 深读：src/index.ts 的 resolveSkillHints 打分后经 detailSkillHints() 对前 MAX_DETAIL_HINTS=3 条调用 registry.get()；enrichSkillHint() 从 SkillDefinition 提取参数约定 metadata.parameters（支持 {name,description}/{name,desc} 对象数组、字符串数组、record 三种形态，至多 4 条、单条说明截 24 字）与正文摘要 digestOf()（空白折叠、截 200 字）；get 失败按 best-effort 降级为仅摘要，不打断优化轮。
+- 注入：src/meta-prompt.ts 的 skillBlock() 渲染为「- 技能名 — 简介 [来源]; params: 参数名=说明」，深读条目追加第二行缩进正文摘要；防幻觉双保险：技能名只允许列出的精确名称，参数名同样只允许列出的名称；params 段整体截 80 字。
+- 配置项 skillAware（默认 true）在 cordis.yml 的 plugins > config > prompt-optimizer 下；skillAware=true 但无技能注册表时 fail loud。
 
 要求：
-1. 先跑通现状：node 项目测试（vitest --project node）里 skills.spec.ts 全绿。
-2. 扩展：技能定义若带参数描述，skill hint 里以「技能名（参数：参数名=说明, …）」形式追加；无参数技能保持原样。
-3. 元提示词防幻觉规则同步收紧：参数同样只允许使用列出的参数名。
+1. node 测试全绿：tests/skills.spec.ts（选型/来源/参数解析/摘要）、tests/meta-prompt.spec.ts（渲染与 80 字截断）、tests/service.spec.ts（运行时注册技能端到端注入参数与摘要）。
+2. 若宿主 @deepseek-ai/dsh-skill 的 SkillSummary/SkillDefinition 字段调整，同步更新解析约定并保持测试覆盖。
 
-约束：打分逻辑保持确定性（不引入模型调用）；每条 hint 总长新增不超过 80 字；不改变现有 12 条上限。
-验收标准：新增用例覆盖「带参技能命中→hint 含参数」「带参技能未命中→无参数段」；全部现有测试不回归；pnpm run check 通过。
+约束：打分逻辑保持确定性（不引入模型调用）；12 条上限、3 条深读上限、80 字参数段上限不变。
+验收标准：用例覆盖「带参技能命中→hint 含参数」「带参技能未命中→无参数段」「深读条目含正文摘要与来源标签」；全部现有测试不回归；pnpm run check 通过。
 ```
 
 ## P3 输出语言跟随 Agent 界面设置
@@ -142,6 +143,53 @@
 
 约束：脚本零依赖（node:fs + 正则即可）；解析失败视为检查失败（fail loud）。
 验收标准：人为把 ci.yml 的 tag 改错→脚本报出该位置；恢复后通过；pnpm run check 全链路绿。
+```
+
+---
+
+## 规划中：技能深化路线（P9/P10，未实现）
+
+以下两个提示词已定设计口径：技能落盘默认项目级、可配置个人级；进化半自动（生成 patch + diff 确认），参照 darwin-skill / huashu-nuwa / dsh-mnemon 的循环机制。待逐个执行。
+
+## P9 技能缺口沉淀：优化结果 → SKILL.md
+
+```text
+任务：为优化结果增加「沉淀为技能」链路——当一次优化产出的提示词具有可复用价值时，蒸馏成 SKILL.md 草稿并在用户确认后写入技能目录。
+
+背景：
+- 宿主技能目录（@deepseek-ai/dsh-skill-filesystem）：项目级 <project>/.dsh/skills（source: project-dsh）、个人级 ~/.dsh/skills（source: user-dsh）；SKILL.md frontmatter 契约：必填 name（kebab-case）+ description，可选 whenToUse（字符串）、metadata（任意对象；参数约定走 metadata.parameters，见 P2）、布尔项 user-invocable / disable-model-invocation；目录 watch 默认开启，写入稳定后自动进入注册表，无需重启。
+- 现有沉淀物：PromptLibrarySaveRequest 已支持把优化结果存入提示词库；本任务把「库条目」升级为「技能」，Host 需新增两个 API：suggestSkill（生成草稿，模型调用）与 saveSkill（落盘，纯确定性）。
+
+要求：
+1. Host 新增 saveSkill：按 target（'project' | 'user'，新增配置 skillSaveTarget，默认 'project'）写入对应目录的 <slug>/SKILL.md；校验 isSkillName 命名、与注册表现有技能重名冲突（fail loud PROMPT_OPTIMIZER_SKILL_EXISTS）、单文件 8000 字符上限；目标文件已存在时绝不覆盖。
+2. Host 新增 suggestSkill：以优化结果 + 原始草稿为输入，产出 frontmatter（name/description/whenToUse，可选 metadata.parameters）与自包含 body；复用三标记 envelope 风格新增 SKILL envelope 与解析器。
+3. UI：预览面板结果卡旁加「沉淀为技能」入口；确认弹层展示完整 SKILL.md 内容与目标目录，用户可改 slug 与 target；落盘成功提示技能已进入注册表。
+4. api 包补 Typert 描述符；文案走 locale 双语字典。
+
+约束：写入必须是用户显式确认动作；slug 冲突允许改名重试；不引入新依赖。
+验收标准：saveSkill 确定性测试（目录选择、重名、命名与大小校验、不覆盖既有文件）；suggestSkill envelope 解析测试；UI 确认流 jsdom 测试；pnpm run check 通过。
+```
+
+## P10 技能进化：使用反馈 → 达尔文式完善回路
+
+```text
+任务：为已沉淀技能建立进化回路——像 darwin-skill 那样（固定 rubric 评分 → 生成改进 patch → 测试提示词盲评门控 → git 版本化 → 人工 checkpoint；收益递减自动停），用真实使用反馈持续完善技能，全程人工把关。
+
+背景：
+- 参照机制：darwin-skill 对 SKILL.md 做 9 维 rubric 评估后爬山改进、每步 git commit、独立评审盲评、验证门控、diminishing returns 自动停；huashu-nuwa 把主题思维框架蒸馏成可运行技能（新技能从何而来）；dsh-mnemon 用记忆空间沉淀洞察并建语义链（反馈从何积累）。
+- 本插件已有钩子：优化轮记录 skillsHinted 与命中技能；PromptVerifyResult 已能执行机械验收命令；registry.get() 可取技能完整定义；P9 的落盘与目录契约直接复用。
+- 进化素材：一次优化中「引用了技能 X 的提示词 + 用户采纳/拒绝 + verify 通过与否」即一条使用反馈。
+
+要求：
+1. Host 新增 evolveSkillEvaluate：给定技能名加载完整定义，按代码内写死的 rubric（触发描述准确性、自包含性、防幻觉边界、简洁性、参数声明合理性、与宿主 API 一致性等）产出评分与短板清单；纯模型调用，零写操作。
+2. Host 新增 evolveSkillDraft：以短板清单 + 近 N 条使用反馈（采纳率、verify 通过率、被拒重写样本）为条件，生成改进后的完整 SKILL.md 全文 + 变更说明（新 envelope），不落盘。
+3. 版本化：技能所在目录无 git 仓库则 git init；每次用户采纳进化生成一条 commit（message 含评分摘要），可回滚。
+4. 验证门控：patch 须通过测试提示词盲评（改进前后定义各跑一轮对比打分）且不低于现版；连续 2 轮提升低于阈值自动停止并报告。
+5. UI：技能卡「进化」入口 → 评分报告 → patch diff 确认 → 落盘；一切写操作均为用户显式点击。
+6. 使用反馈持久化为插件数据目录下的 JSONL（技能名、时间、采纳与否、verify 结果），提供清理入口。
+
+约束：绝不自动改写技能文件；rubric 维度写死、可开关但不可注入自定义提示（防提示注入）；单技能单次进化至多 3 轮迭代；评审调用走插件现有 route 解析。
+验收标准：评分确定性测试（同输入同分数）；patch 仅在用户确认后落盘（测试断言）；git commit 含评分摘要且可回滚；递减停止逻辑有测试；pnpm run check 通过。
 ```
 
 ---

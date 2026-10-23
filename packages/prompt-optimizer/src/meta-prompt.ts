@@ -8,7 +8,7 @@
  * @module @yimiliya/dsh-prompt-optimizer
  */
 
-import type { SkillHint } from './skills.ts'
+import type { SkillHint, SkillParameter } from './skills.ts'
 
 /** Starts the rewritten-prompt section of the model response. */
 export const OPTIMIZED_MARKER = '<<<OPTIMIZED_PROMPT>>>'
@@ -184,14 +184,47 @@ const SYSTEM_ROLE_INSTRUCTION = 'Rewrite the draft into the standing instruction
   + "this specialist: follow the role definition's structure, scope, and hard limits so every future turn "
   + 'behaves as the role.'
 
+/** Longest rendered `params:` segment one hint line carries. */
+const PARAMS_SEGMENT_MAX_CHARS = 80
+
+/**
+ * Render one hint's parameter descriptors as a `params:` segment, clipped
+ * with an explicit ellipsis marker when the whole segment exceeds
+ * {@link PARAMS_SEGMENT_MAX_CHARS}.
+ * @param parameters - parsed descriptors; absent or empty renders nothing.
+ * @returns `params: name=description, …` or an empty string.
+ */
+function parameterSegment(parameters: readonly SkillParameter[] | undefined): string {
+  if (parameters === undefined || parameters.length === 0) return ''
+  const segment = `params: ${parameters.map(parameter => `${parameter.name}=${parameter.description}`).join(', ')}`
+  return segment.length <= PARAMS_SEGMENT_MAX_CHARS
+    ? segment
+    : `${segment.slice(0, PARAMS_SEGMENT_MAX_CHARS)}…`
+}
+
+/**
+ * Render one skill hint as its bullet line plus, for deep-read hints, one
+ * indented digest line quoting the head of the skill body.
+ * @param hint - ranked (and possibly enriched) skill hint.
+ * @returns the exact meta-prompt lines for the hint.
+ */
+function renderSkillHint(hint: SkillHint): string {
+  const params = parameterSegment(hint.parameters)
+  const line = `- ${hint.name} — ${hint.description} [${hint.sourceLabel}]${params === '' ? '' : `; ${params}`}`
+  return hint.detail === undefined || hint.detail === ''
+    ? line
+    : `${line}\n    ${hint.detail}`
+}
+
 /** Skill-hint block appended to a system prompt when skills matched the draft. */
 function skillBlock(skills: readonly SkillHint[]): readonly string[] {
   if (skills.length === 0) return []
   return [
     '',
-    'Installed skills for this agent that match the draft (name — description):',
+    'Installed skills for this agent that match the draft (name — description [origin]):',
     'Reference a listed skill only by its exact name and only when it clearly serves the task; never invent, rename, or guess skill names. When none applies, mention no skill.',
-    ...skills.map(hint => `- ${hint.name} — ${hint.description}`),
+    'When a hint lists params, the rewrite may reference only those exact parameter names; never invent parameters.',
+    ...skills.map(hint => renderSkillHint(hint)),
   ]
 }
 

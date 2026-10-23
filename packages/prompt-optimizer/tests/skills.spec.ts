@@ -1,7 +1,7 @@
 /** Deterministic skill-hint selection over registry summaries. */
 import { describe, expect, it } from 'vitest'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
-import { selectSkillHints } from '../src/skills.ts'
+import { digestOf, enrichSkillHint, selectSkillHints, skillParametersOf, sourceLabelOf } from '../src/skills.ts'
 
 /**
  * Build one registry summary with defaults that permit every surface.
@@ -53,5 +53,68 @@ describe('selectSkillHints', () => {
       summary({ name: 'alpha-checks', description: 'run checks' }),
     ])
     expect(hints.map(hint => hint.name)).toEqual(['alpha-checks', 'zeta-checks'])
+  })
+
+  it('labels each hint with the coarse origin of its source', () => {
+    const hints = selectSkillHints('run the pre-push checks', [
+      summary({ name: 'dsh-pre-push-checks', description: 'Run the repository check suite before pushing.', source: 'project-dsh' }),
+    ])
+    expect(hints[0]!.sourceLabel).toBe('project')
+  })
+})
+
+describe('sourceLabelOf', () => {
+  it('buckets discovery sources into coarse origins', () => {
+    expect(sourceLabelOf('project-dsh')).toBe('project')
+    expect(sourceLabelOf('project-agents')).toBe('project')
+    expect(sourceLabelOf('user-dsh')).toBe('user')
+    expect(sourceLabelOf('user-agents')).toBe('user')
+    expect(sourceLabelOf('bundled')).toBe('bundled')
+    expect(sourceLabelOf('runtime')).toBe('runtime')
+    expect(sourceLabelOf('custom')).toBe('custom')
+    expect(sourceLabelOf('marketplace-x')).toBe('custom')
+  })
+})
+
+describe('skillParametersOf', () => {
+  it('parses object-array, string-array, and record conventions', () => {
+    expect(skillParametersOf({ metadata: { parameters: [{ name: 'env', description: '目标环境' }, { name: 'region', desc: '部署区域' }] } }))
+      .toEqual([{ name: 'env', description: '目标环境' }, { name: 'region', description: '部署区域' }])
+    expect(skillParametersOf({ metadata: { parameters: ['verbose'] } })).toEqual([{ name: 'verbose', description: '' }])
+    expect(skillParametersOf({ metadata: { parameters: { env: '目标环境' } } })).toEqual([{ name: 'env', description: '目标环境' }])
+  })
+
+  it('yields nothing for absent or unrecognized shapes', () => {
+    expect(skillParametersOf({ metadata: {} })).toEqual([])
+    expect(skillParametersOf({})).toEqual([])
+    expect(skillParametersOf({ metadata: { parameters: 'env' } })).toEqual([])
+    expect(skillParametersOf({ metadata: { parameters: [{ description: '无名字' }] } })).toEqual([])
+  })
+
+  it('clips long parameter descriptions and caps the descriptor count', () => {
+    const parsed = skillParametersOf({ metadata: { parameters: [
+      { name: 'a', description: 'x'.repeat(40) },
+      { name: 'b', description: 'b' },
+      { name: 'c', description: 'c' },
+      { name: 'd', description: 'd' },
+      { name: 'e', description: 'e' },
+    ] } })
+    expect(parsed).toHaveLength(4)
+    expect(parsed[0]!.description).toBe(`${'x'.repeat(24)}…`)
+  })
+})
+
+describe('digestOf and enrichSkillHint', () => {
+  it('flattens and clips a body into one digest line', () => {
+    expect(digestOf('# Title\n\nBody  line.')).toBe('# Title Body line.')
+    expect(digestOf('a'.repeat(250))).toBe(`${'a'.repeat(200)}…`)
+    expect(digestOf('   ')).toBe('')
+  })
+
+  it('enriches a hint with parameters and digest, omitting empty ones', () => {
+    const hint = { name: 'deploy', description: 'Deploy.', sourceLabel: 'project' }
+    expect(enrichSkillHint(hint, { content: 'Build then ship.', metadata: { parameters: [{ name: 'env', description: '环境' }] } }))
+      .toEqual({ ...hint, parameters: [{ name: 'env', description: '环境' }], detail: 'Build then ship.' })
+    expect(enrichSkillHint(hint, { content: '' })).toEqual(hint)
   })
 })

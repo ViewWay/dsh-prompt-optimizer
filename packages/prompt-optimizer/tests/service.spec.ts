@@ -849,8 +849,9 @@ describe('skill-aware optimization', () => {
     ctx.skills.register({
       name: 'dsh-pre-push-checks',
       description: 'Run the repository pre-push check suite before pushing.',
-      content: 'run the checks',
+      content: 'Run lint, typecheck, build, and tests in order; report each result.',
       source: 'runtime',
+      metadata: { parameters: [{ name: 'scope', description: '检查范围' }] },
     })
 
     const result = await ctx.promptOptimizer.optimize(
@@ -860,8 +861,10 @@ describe('skill-aware optimization', () => {
 
     expect(result.optimizedText).toBe('优化后的提示词')
     const system = adapter.requests[0]!.system
-    expect(system).toContain('- dsh-pre-push-checks — Run the repository pre-push check suite before pushing.')
+    expect(system).toContain('- dsh-pre-push-checks — Run the repository pre-push check suite before pushing. [runtime]; params: scope=检查范围')
     expect(system).toContain('never invent, rename, or guess skill names')
+    expect(system).toContain('never invent parameters')
+    expect(system).toContain('    Run lint, typecheck, build, and tests in order; report each result.')
     const session = ctx.sessions.get(sessionId)
     const logged = session?.snapshotEvents()
       .findLast(event => event.type === 'prompt-optimizer/llm-request')?.data

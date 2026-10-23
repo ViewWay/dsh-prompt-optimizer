@@ -179,17 +179,53 @@ describe('role conditioning', () => {
 
 describe('skill conditioning', () => {
   const hints: readonly SkillHint[] = [
-    { name: 'dsh-pre-push-checks', description: 'Run the repository pre-push check suite before pushing.' },
+    { name: 'dsh-pre-push-checks', description: 'Run the repository pre-push check suite before pushing.', sourceLabel: 'runtime' },
   ]
 
   it('appends the exact-name skill block to every round prompt', () => {
     const draft = optimizerSystemPrompt({ skills: hints })
     expect(draft).toContain('Installed skills for this agent that match the draft')
     expect(draft).toContain('never invent, rename, or guess skill names')
-    expect(draft).toContain('- dsh-pre-push-checks — Run the repository pre-push check suite before pushing.')
+    expect(draft).toContain('- dsh-pre-push-checks — Run the repository pre-push check suite before pushing. [runtime]')
     expect(draft.indexOf('Installed skills')).toBeLessThan(draft.indexOf('Respond with exactly'))
     expect(optimizerSystemPromptForSystem({ skills: hints })).toContain('dsh-pre-push-checks')
     expect(critiqueSystemPrompt({ skills: hints })).toContain('dsh-pre-push-checks')
+  })
+
+  it('renders origin labels, params segments, and deep-read digests', () => {
+    const enriched: readonly SkillHint[] = [{
+      name: 'deploy-service',
+      description: 'Deploy the service.',
+      sourceLabel: 'project',
+      parameters: [
+        { name: 'env', description: '目标环境' },
+        { name: 'region', description: '部署区域' },
+      ],
+      detail: 'Build, then ship to the target environment.',
+    }]
+    const prompt = optimizerSystemPrompt({ skills: enriched })
+    expect(prompt).toContain('- deploy-service — Deploy the service. [project]; params: env=目标环境, region=部署区域')
+    expect(prompt).toContain('never invent parameters')
+    expect(prompt).toContain('    Build, then ship to the target environment.')
+  })
+
+  it('clips the params segment at eighty characters', () => {
+    const capped: readonly SkillHint[] = [{
+      name: 'deploy-service',
+      description: 'Deploy.',
+      sourceLabel: 'user',
+      parameters: [
+        { name: 'alpha', description: 'x'.repeat(24) },
+        { name: 'beta', description: 'y'.repeat(24) },
+        { name: 'gamma', description: 'z'.repeat(24) },
+      ],
+    }]
+    const line = optimizerSystemPrompt({ skills: capped })
+      .split('\n').find(text => text.startsWith('- deploy-service'))
+    expect(line).toBeDefined()
+    const segment = line!.slice(line!.indexOf('params:'))
+    expect(segment.length).toBeLessThanOrEqual(81)
+    expect(segment.endsWith('…')).toBe(true)
   })
 
   it('omits the skill block entirely without hints', () => {
