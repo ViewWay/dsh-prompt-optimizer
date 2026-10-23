@@ -1,7 +1,0 @@
-{
-  "plugins": {
-    "enabledPlugins": {
-      "archify@archify-marketplace": true
-    }
-  }
-}
