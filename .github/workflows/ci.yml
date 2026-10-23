@@ -14,8 +14,12 @@ concurrency:
 
 jobs:
   checks:
-    name: Lint, typecheck, build, test
-    runs-on: ubuntu-latest
+    name: Lint, typecheck, build, test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 

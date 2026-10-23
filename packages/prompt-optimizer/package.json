@@ -1,7 +1,7 @@
 {
   "name": "@yimiliya/dsh-prompt-optimizer",
   "description": "One-shot LLM rewriting of the conversation draft: roles, skill hints, output language",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
