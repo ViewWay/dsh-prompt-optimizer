@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm -r --workspace-concurrency=1 run build",
     "lint": "oxlint .",
+    "baseline": "node scripts/check-baseline.mjs",
     "test": "vitest run",
     "typecheck": "tsc -b packages/prompt-optimizer packages/api-prompt-optimizer packages/client-ui-prompt-optimizer",
     "check": "bash scripts/check.sh"

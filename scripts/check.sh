@@ -6,6 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 pnpm run lint
+pnpm run baseline
 pnpm run typecheck
 pnpm run build
 pnpm run test
