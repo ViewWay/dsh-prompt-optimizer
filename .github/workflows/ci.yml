@@ -45,7 +45,10 @@ jobs:
 
       # Client tests resolve the @deepseek-ai/* sources through a harness
       # checkout (docs/compatibility.md is the source of truth for the tag).
+      # bash is explicit: windows-latest defaults to pwsh, which rejects the
+      # backslash continuation and the POSIX env-prefix below.
       - name: Fetch the dsh harness sources
+        shell: bash
         run: |
           mkdir -p .tmp
           git clone --depth 1 --branch dsh-v0.2.1-rc.2 \
@@ -56,4 +59,5 @@ jobs:
         working-directory: .tmp/dsh-harness
 
       - name: Test
+        shell: bash
         run: DSH_HARNESS_ROOT=$PWD/.tmp/dsh-harness pnpm run test
