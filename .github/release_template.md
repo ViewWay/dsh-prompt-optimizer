@@ -10,5 +10,8 @@
 ## Install / 安装
 
 ```sh
-dsh plugin --profile web update @yimiliya/dsh-prompt-optimizer-bundle@latest
+dsh plugin --profile web add @yimiliya/dsh-prompt-optimizer-bundle@latest
 ```
+
+<!-- `dsh plugin update` can report "Already up to date" against a pinned
+     lockfile — prefer `add @version` for bumping an existing install. -->

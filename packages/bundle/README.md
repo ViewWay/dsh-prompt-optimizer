@@ -10,10 +10,10 @@ On any profile that has dsh installed:
 dsh plugin --profile web add @yimiliya/dsh-prompt-optimizer-bundle
 ```
 
-Updates:
+Updates (an explicit version overrides a pinned lockfile):
 
 ```sh
-dsh plugin --profile web update @yimiliya/dsh-prompt-optimizer-bundle@latest
+dsh plugin --profile web add @yimiliya/dsh-prompt-optimizer-bundle@latest
 ```
 
 The bundle stacks three plugins into the profile's `dsh.profile.bundles`:
