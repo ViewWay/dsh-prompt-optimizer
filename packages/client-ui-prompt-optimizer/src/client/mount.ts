@@ -244,13 +244,16 @@ function registerUi(ctx: Context): void {
   ))
   // Best-effort: the per-queue-item entry needs the harness slot
   // `conversation.input.dock.queue.item`, which shipped after 0.2.1-rc.2.
-  // Older hosts reject the unknown slot; skip the entry there.
+  // Older hosts reject the unknown slot; skip the entry there and surface the
+  // degradation once on the settings page.
+  let queueEntryUnavailable = false
   try {
     ctx.slots.inject('conversation.input.dock.queue.item' as never, () => ctx.slots.register(
       { name: 'conversation.input.dock.queue.item', id: 'prompt-optimizer', locale: NS, inject: () => injected } as never,
       QueueItemOptimizeEntry,
     ))
   } catch {
+    queueEntryUnavailable = true
     ctx.logger.warn('prompt optimizer: queue-item slot unavailable on this host; the queue entry stays hidden')
   }
   ctx.slots.inject('conversation.composer', () => ctx.slots.register(
@@ -270,7 +273,7 @@ function registerUi(ctx: Context): void {
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register(
     {
       name: 'plugins.bundle.config', key: '@yimiliya/dsh-prompt-optimizer-bundle',
-      locale: NS, inject: () => ({ ...settingsForm.inject(), loadRoles: actions.loadRoles }),
+      locale: NS, inject: () => ({ ...settingsForm.inject(), loadRoles: actions.loadRoles, queueEntryUnavailable }),
     },
     PromptOptimizerSettings,
   ))

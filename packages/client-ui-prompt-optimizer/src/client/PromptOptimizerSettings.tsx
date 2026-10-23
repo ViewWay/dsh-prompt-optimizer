@@ -12,6 +12,8 @@ import css from './PromptOptimizerSettings.module.css'
 export interface PromptOptimizerSettingsInjected extends PromptOptimizerFormInjected {
   /** List the host's selectable role definitions; a failing listing keeps the staged text editable. */
   loadRoles: () => Promise<readonly PromptRoleSummary[]>
+  /** Whether this activation's queue-item entry degraded on a host lacking its slot. */
+  queueEntryUnavailable: boolean
 }
 
 /** Bundle-config owner share plus the injected form and roles verb. */
@@ -43,10 +45,12 @@ export function PromptOptimizerSettings(props: PromptOptimizerSettingsProps) {
   const disabled = !state.writable || state.saving
   const stored = state.defaultRole.text.trim()
   const missingRole = stored !== '' && !roles.some(summary => summary.id === stored)
-  return <SettingsForm labels={{
-    unavailable: t('settingsUnavailable'), readOnly: t('settingsReadOnly'), saveFailed: t('settingsSaveFailed'),
-    save: t('settingsSave'), saving: t('settingsSaving'),
-  }} state={state} onSave={props.save} onDiscard={props.discard}>
+  return <>
+    {props.queueEntryUnavailable && <p role="status" className={css.hint}>{t('settingsQueueEntryUnavailable')}</p>}
+    <SettingsForm labels={{
+      unavailable: t('settingsUnavailable'), readOnly: t('settingsReadOnly'), saveFailed: t('settingsSaveFailed'),
+      save: t('settingsSave'), saving: t('settingsSaving'),
+    }} state={state} onSave={props.save} onDiscard={props.discard}>
     <div className={css.field}>
       <div className={css.toolbar}>
         <label htmlFor={roleId}>{t('settingsDefaultRole')}</label>
@@ -64,5 +68,6 @@ export function PromptOptimizerSettings(props: PromptOptimizerSettingsProps) {
       {state.defaultRole.invalid && <p role="status">{t('settingsRoleUnavailableOption', { role: stored })}</p>}
       {rolesFailed && !state.defaultRole.invalid && <p role="status" className={css.hint}>{t('settingsRolesUnavailable')}</p>}
     </div>
-  </SettingsForm>
+    </SettingsForm>
+  </>
 }

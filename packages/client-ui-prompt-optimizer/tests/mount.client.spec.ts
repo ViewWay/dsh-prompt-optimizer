@@ -2,15 +2,25 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
+import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { RemoteError, type TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@yimiliya/dsh-api-prompt-optimizer/types'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import { createElement } from 'react'
 import { mountPromptOptimizer, inject } from '../src/client/mount.ts'
 import { apply as hostApply } from '../src/index.ts'
 import { OptimizeButton } from '../src/client/OptimizeButton.tsx'
 import { PreviewPanel } from '../src/client/PreviewPanel.tsx'
+import { QueueItemOptimizeEntry } from '../src/client/QueueItemOptimizeEntry.tsx'
+import {
+  PromptOptimizerSettings, type PromptOptimizerSettingsInjected, type PromptOptimizerSettingsProps,
+} from '../src/client/PromptOptimizerSettings.tsx'
+import { en, type PromptOptimizerKey } from '../src/client/locales.ts'
 import type { OptimizationSnapshot, OptimizationState } from '../src/client/optimization.ts'
+
+afterEach(cleanup)
 
 const REMOTE: TypertRemoteContribution = {
   package: '@yimiliya/dsh-api-prompt-optimizer',
@@ -107,6 +117,30 @@ function stateOf(ctx: Context): OptimizationState | undefined {
   return actionsOf(ctx).hooks.optimization.getSnapshot()[SESSION]
 }
 
+/** Simulate a pre-baseline host: `slots.inject` rejects the unknown queue-item slot key. */
+function rejectQueueItemSlot(ctx: Context): void {
+  const slots = ctx.slots as unknown as { inject: (key: string, callback: () => unknown) => () => void }
+  const realInject = slots.inject
+  slots.inject = (key, callback) => {
+    if (key === 'conversation.input.dock.queue.item') {
+      throw new Error(`slot "${key}" is not declared (a parent entry's children table must declare it)`)
+    }
+    return realInject.call(ctx.slots, key, callback)
+  }
+}
+
+/** Page-view props for the mounted settings card: its real injected face plus the runtime share. */
+function settingsPageProps(ctx: Context): PromptOptimizerSettingsProps {
+  const entry = ctx.slots.entries('plugins.bundle.config').find(candidate => candidate.component === PromptOptimizerSettings)
+  if (entry?.inject === undefined) throw new Error('settings entry not registered')
+  const { hooks, ...actions } = entry.inject() as PromptOptimizerSettingsInjected
+  return {
+    view: 'page', ...actions,
+    useSettingsForm: bindSnapshotSelector(hooks.settingsForm),
+    t: (key: PromptOptimizerKey) => en[key],
+  } as PromptOptimizerSettingsProps
+}
+
 it('mounts both seats, runs a round, replaces the draft on apply, and withdraws on disposal', async () => {
   hostApply()
   const b = await fixture()
@@ -133,6 +167,38 @@ it('mounts both seats, runs a round, replaces the draft on apply, and withdraws 
     expect(b.ctx.slots.entries('conversation.input.right')).toHaveLength(0)
     expect(b.ctx.slots.entries('conversation.composer')).toHaveLength(0)
     expect(b.unmount).toHaveBeenCalledOnce()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('notifies the unavailable queue-item slot once on the settings page while other entries still mount', async () => {
+  const b = await fixture()
+  try {
+    rejectQueueItemSlot(b.ctx)
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    expect(b.ctx.slots.entries('conversation.input.dock.queue.item')).toHaveLength(0)
+    expect(b.ctx.slots.entries('conversation.input.right').find(item => item.component === OptimizeButton)).toBeTruthy()
+    expect(b.ctx.slots.entries('conversation.composer').find(item => item.component === PreviewPanel)).toBeTruthy()
+    const settings = b.ctx.slots.entries('plugins.bundle.config').find(item => item.component === PromptOptimizerSettings)
+    expect(settings?.inject?.()).toMatchObject({ queueEntryUnavailable: true })
+    render(createElement(PromptOptimizerSettings, settingsPageProps(b.ctx)))
+    expect(screen.getAllByText(en.settingsQueueEntryUnavailable)).toHaveLength(1)
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('keeps the settings page free of the queue-entry notice when the host declares the slot', async () => {
+  const b = await fixture()
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    expect(b.ctx.slots.entries('conversation.input.dock.queue.item')
+      .find(item => item.component === QueueItemOptimizeEntry)).toBeTruthy()
+    const settings = b.ctx.slots.entries('plugins.bundle.config').find(item => item.component === PromptOptimizerSettings)
+    expect(settings?.inject?.()).toMatchObject({ queueEntryUnavailable: false })
+    render(createElement(PromptOptimizerSettings, settingsPageProps(b.ctx)))
+    expect(screen.queryByText(en.settingsQueueEntryUnavailable)).toBeNull()
+    await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }
 })
 
