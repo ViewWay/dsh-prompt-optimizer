@@ -31,7 +31,17 @@ interface Published {
   readonly unpublish: () => void
 }
 
-async function fixture(optimize?: (request: unknown, signal: AbortSignal) => Promise<unknown>) {
+/** Locale snapshot a stub locale runtime republishes; pins single- or mis-rooted catalogs. */
+interface StubLocaleSnapshot {
+  readonly active: string
+  readonly locales: readonly { readonly id: string; readonly label: string }[]
+  readonly revision: number
+}
+
+async function fixture(
+  optimize?: (request: unknown, signal: AbortSignal) => Promise<unknown>,
+  localeSnapshot?: () => StubLocaleSnapshot,
+) {
   const ctx = new Context(), unmount = vi.fn(async () => {})
   class Remote extends Service {
     constructor() { super(ctx, 'remote') }
@@ -61,7 +71,9 @@ async function fixture(optimize?: (request: unknown, signal: AbortSignal) => Pro
       mutate: async () => false,
     }),
   } as never)
-  ctx.provide('locale', new LocaleRuntime(ctx))
+  ctx.provide('locale', (localeSnapshot === undefined
+    ? new LocaleRuntime(ctx)
+    : { getLocale: localeSnapshot, register: () => () => {}, setLocale: () => {} }) as never)
   ctx.locale.setLocale('en')
   await ctx.plugin(SlotRegistry)
   ctx.slots.register({ name: 'root', children: {
@@ -188,6 +200,40 @@ it('carries the active agent-locale label as the round language', async () => {
     expect(styled.optimize).toHaveBeenCalledWith({
       sessionId: SESSION, text: 'draft', language: '中文',
     }, expect.any(AbortSignal))
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('omits the round language when the interface offers a single language', async () => {
+  let request: unknown
+  const styled = {
+    optimize: vi.fn(async (payload: unknown) => { request = payload; return { ok: true as const, value: RESULT } }),
+  }
+  const b = await fixture(styled.optimize, () => ({ active: 'en', locales: [{ id: 'en', label: 'English' }], revision: 0 }))
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    actionsOf(b.ctx).start(SESSION, 'draft', () => {})
+    await vi.waitFor(() => { expect(styled.optimize).toHaveBeenCalledTimes(1) })
+    expect(request).not.toHaveProperty('language')
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('omits the round language when the multi-language catalog lacks the active label', async () => {
+  let request: unknown
+  const styled = {
+    optimize: vi.fn(async (payload: unknown) => { request = payload; return { ok: true as const, value: RESULT } }),
+  }
+  const b = await fixture(styled.optimize, () => ({
+    active: 'fr', locales: [{ id: 'en', label: 'English' }, { id: 'zh', label: '中文' }], revision: 0,
+  }))
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    actionsOf(b.ctx).start(SESSION, 'draft', () => {})
+    await vi.waitFor(() => { expect(styled.optimize).toHaveBeenCalledTimes(1) })
+    expect(request).not.toHaveProperty('language')
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }
 })

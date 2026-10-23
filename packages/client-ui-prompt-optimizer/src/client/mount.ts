@@ -48,11 +48,14 @@ interface RoundRequest {
  * Read the active locale's self-describing label (for example `中文`), so the
  * host pins the rewrite to the agent's configured language.
  * @param locale - live locale runtime.
- * @returns the active language's own label, or undefined when the catalog
- * carries no definition for the active id.
+ * @returns the active language's own label; undefined when the interface
+ * offers no language choice or the catalog carries no definition for the
+ * active id.
  */
 function activeLanguageLabel(locale: Context['locale']): string | undefined {
   const snapshot = locale.getLocale()
+  // A single selectable language is unambiguous; the host default already matches it.
+  if (snapshot.locales.length < 2) return undefined
   return snapshot.locales.find(candidate => candidate.id === snapshot.active)?.label
 }
 
