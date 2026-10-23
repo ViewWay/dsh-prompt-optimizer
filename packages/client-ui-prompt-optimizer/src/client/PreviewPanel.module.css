@@ -85,6 +85,22 @@
   overflow-wrap: anywhere;
 }
 
+.critique {
+  margin: 10px 4px 0;
+}
+
+.critique .changes {
+  margin: 0;
+}
+
+.critiqueActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
 .criterion {
   display: flex;
   flex-direction: column;

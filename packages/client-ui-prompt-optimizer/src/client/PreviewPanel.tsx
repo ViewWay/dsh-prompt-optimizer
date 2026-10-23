@@ -104,6 +104,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const roles = usePromptRoles(loadRoles)
   const [checks, setChecks] = useState<Record<string, CheckState>>({})
   const [library, setLibrary] = useState<LibraryState>(LIBRARY_IDLE)
+  const [critiqueCopyFailed, setCritiqueCopyFailed] = useState(false)
   if (state === undefined) return null
   const ready = state.phase === 'ready' && state.result !== undefined
 
@@ -134,6 +135,19 @@ export function PreviewPanel(props: PreviewPanelProps) {
         setLibrary({ saving: false, saved: false, error: message })
       }
     })()  }
+
+  const copyCritique = (): void => {
+    const critique = state.result?.critique ?? []
+    setCritiqueCopyFailed(false)
+    void (async () => {
+      try {
+        // Raw entry text only; the localized prefix is display chrome, not checklist content.
+        await navigator.clipboard.writeText(critique.map(item => `- ${item}`).join('\n'))
+      } catch {
+        setCritiqueCopyFailed(true)
+      }
+    })()
+  }
 
   return (
     <div className={css.frame}>
@@ -182,9 +196,19 @@ export function PreviewPanel(props: PreviewPanelProps) {
           </ul>
           : null}
         {ready && state.result.critique !== undefined && state.result.critique.length > 0
-          ? <ul className={css.changes} data-testid="optimization-critique">
-            {state.result.critique.map(item => <li key={item}>{t('critiqueItem', { text: item })}</li>)}
-          </ul>
+          ? <div className={css.critique}>
+            <ul className={css.changes} data-testid="optimization-critique">
+              {state.result.critique.map(item => <li key={item}>{t('critiqueItem', { text: item })}</li>)}
+            </ul>
+            <div className={css.critiqueActions}>
+              <Button size="sm" type="button" onClick={() => { copyCritique() }}>
+                {t('copyCritique')}
+              </Button>
+              {critiqueCopyFailed
+                ? <span className={css.failed} data-testid="critique-copy-error" role="alert">{t('copyCritiqueFailed')}</span>
+                : null}
+            </div>
+          </div>
           : null}
         {ready && state.result.acceptance.length > 0
           ? <ul className={css.changes} data-testid="optimization-acceptance">

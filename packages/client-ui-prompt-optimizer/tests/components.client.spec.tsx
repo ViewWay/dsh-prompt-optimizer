@@ -392,6 +392,30 @@ describe('PreviewPanel', () => {
     expect(screen.getByTestId('optimization-critique').textContent).toContain('评审修订：消除了模糊表述')
   })
 
+  it('copies every critique entry in display order without the display prefix', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    render(<PreviewPanel {...panelProps({ ...READY, result: { ...RESULT, critique: ['第一条', '第二条'] } })} />)
+    fireEvent.click(screen.getByRole('button', { name: zh.copyCritique }))
+    await waitFor(() => { expect(writeText).toHaveBeenCalledExactlyOnceWith('- 第一条\n- 第二条') })
+  })
+
+  it('omits the copy button when the critique list is empty', () => {
+    render(<PreviewPanel {...panelProps({ ...READY, result: { ...RESULT, critique: [] } })} />)
+    expect(screen.queryByTestId('optimization-critique')).toBeNull()
+    expect(screen.queryByRole('button', { name: zh.copyCritique })).toBeNull()
+  })
+
+  it('notes a clipboard failure without crashing', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn(async () => { throw new Error('denied') }) },
+      configurable: true,
+    })
+    render(<PreviewPanel {...panelProps({ ...READY, result: { ...RESULT, critique: ['一条'] } })} />)
+    fireEvent.click(screen.getByRole('button', { name: zh.copyCritique }))
+    await waitFor(() => { expect(screen.getByTestId('critique-copy-error').textContent).toBe(zh.copyCritiqueFailed) })
+  })
+
   it('reruns the same draft through the system-prompt loop on demand', () => {
     const regenerateAsSystem = vi.fn()
     render(<PreviewPanel {...panelProps(READY, { regenerateAsSystem })} />)
