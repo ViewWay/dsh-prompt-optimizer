@@ -51,6 +51,7 @@ interface StubLocaleSnapshot {
 async function fixture(
   optimize?: (request: unknown, signal: AbortSignal) => Promise<unknown>,
   localeSnapshot?: () => StubLocaleSnapshot,
+  declareQueueSlot = true,
 ) {
   const ctx = new Context(), unmount = vi.fn(async () => {})
   class Remote extends Service {
@@ -88,7 +89,7 @@ async function fixture(
   await ctx.plugin(SlotRegistry)
   ctx.slots.register({ name: 'root', children: {
     'conversation.input.right': { kind: 'list', scope: 'session' },
-    'conversation.input.dock.queue.item': { kind: 'list', scope: 'session' },
+    ...(declareQueueSlot ? { 'conversation.input.dock.queue.item': { kind: 'list', scope: 'session' } } : {}),
     'conversation.composer': { kind: 'chain', scope: 'session' },
     'plugins.bundle.config': { kind: 'keyed', scope: 'root' },
   } } as never,
@@ -117,7 +118,7 @@ function stateOf(ctx: Context): OptimizationState | undefined {
   return actionsOf(ctx).hooks.optimization.getSnapshot()[SESSION]
 }
 
-/** Simulate a pre-baseline host: `slots.inject` rejects the unknown queue-item slot key. */
+/** Simulate a host where the queue-item inject rejects (a declared slot failing registration). */
 function rejectQueueItemSlot(ctx: Context): void {
   const slots = ctx.slots as unknown as { inject: (key: string, callback: () => unknown) => () => void }
   const realInject = slots.inject
@@ -176,6 +177,27 @@ it('notifies the unavailable queue-item slot once on the settings page while oth
     rejectQueueItemSlot(b.ctx)
     const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
     await fiber
+    expect(b.ctx.slots.entries('conversation.input.dock.queue.item')).toHaveLength(0)
+    expect(b.ctx.slots.entries('conversation.input.right').find(item => item.component === OptimizeButton)).toBeTruthy()
+    expect(b.ctx.slots.entries('conversation.composer').find(item => item.component === PreviewPanel)).toBeTruthy()
+    const settings = b.ctx.slots.entries('plugins.bundle.config').find(item => item.component === PromptOptimizerSettings)
+    expect(settings?.inject?.()).toMatchObject({ queueEntryUnavailable: true })
+    render(createElement(PromptOptimizerSettings, settingsPageProps(b.ctx)))
+    expect(screen.getAllByText(en.settingsQueueEntryUnavailable)).toHaveLength(1)
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('notifies the never-declared queue-item slot once while inject stays pending and other entries still mount', async () => {
+  const b = await fixture(undefined, undefined, false)
+  try {
+    const injectKeys: string[] = []
+    const slots = b.ctx.slots as unknown as { inject: (key: string, callback: () => unknown) => () => void }
+    const realInject = slots.inject
+    slots.inject = (key, callback) => { injectKeys.push(key); return realInject.call(b.ctx.slots, key, callback) }
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    expect(injectKeys).toContain('conversation.input.dock.queue.item')
     expect(b.ctx.slots.entries('conversation.input.dock.queue.item')).toHaveLength(0)
     expect(b.ctx.slots.entries('conversation.input.right').find(item => item.component === OptimizeButton)).toBeTruthy()
     expect(b.ctx.slots.entries('conversation.composer').find(item => item.component === PreviewPanel)).toBeTruthy()

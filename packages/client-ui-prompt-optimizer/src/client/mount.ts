@@ -244,9 +244,12 @@ function registerUi(ctx: Context): void {
   ))
   // Best-effort: the per-queue-item entry needs the harness slot
   // `conversation.input.dock.queue.item`, which shipped after 0.2.1-rc.2.
-  // Older hosts reject the unknown slot; skip the entry there and surface the
-  // degradation once on the settings page.
-  let queueEntryUnavailable = false
+  // Hosts that never declared the key make inject() wait silently (spec()
+  // stays undefined) while a declared key can only reject inside the register
+  // callback; inject() runs either way so a host declaring the slot later
+  // still gets the entry, and the flag surfaces the degradation once on the
+  // settings page.
+  let queueEntryUnavailable = ctx.slots.spec('conversation.input.dock.queue.item' as never) === undefined
   try {
     ctx.slots.inject('conversation.input.dock.queue.item' as never, () => ctx.slots.register(
       { name: 'conversation.input.dock.queue.item', id: 'prompt-optimizer', locale: NS, inject: () => injected } as never,
@@ -254,6 +257,8 @@ function registerUi(ctx: Context): void {
     ))
   } catch {
     queueEntryUnavailable = true
+  }
+  if (queueEntryUnavailable) {
     ctx.logger.warn('prompt optimizer: queue-item slot unavailable on this host; the queue entry stays hidden')
   }
   ctx.slots.inject('conversation.composer', () => ctx.slots.register(
