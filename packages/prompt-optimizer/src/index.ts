@@ -736,16 +736,23 @@ export default class PromptOptimizer extends Service {
   }
 
   /**
-   * Evolve one role definition: feed the current definition plus the round's
-   * draft and optimized result to one model round, validate the produced
-   * definition, then write the previous version to `<slug>.md.bak` (which
+   * Evolve one role definition in two phases over one model round: a preview
+   * call (`confirm` absent or false) feeds the current definition plus the
+   * round's draft and optimized result to one model round, validates the
+   * produced definition, stores it as pending, and returns it in
+   * `pendingDefinition` without writing files; a confirming call
+   * (`confirm: true`) runs no model round, re-validates the pending
+   * definition, then writes the previous version to `<slug>.md.bak` (which
    * never matches the role-file pattern and so never joins a listing) before
    * the new definition replaces `<slug>.md`.
-   * @param request - producing session, role slug, and the round's two texts.
+   * @param request - producing session, role slug, the round's two texts, and
+   * the phase selector.
    * @param signal - caller cancellation.
-   * @returns the rewritten role's slug, parsed name, and written byte size.
+   * @returns the rewritten role's slug, parsed name, byte size, and — for a
+   * preview — the pending definition itself.
    * @throws when the session is gone, the role is not listed, the model round
-   * fails, or the produced definition fails validation.
+   * fails, a confirm arrives without a pending preview, or the produced
+   * definition fails validation.
    */
   async evolveRole(request: PromptRoleEvolveRequest, signal: AbortSignal): Promise<PromptRoleEvolveResult> {
     signal.throwIfAborted()
@@ -761,43 +768,60 @@ export default class PromptOptimizer extends Service {
       fail('PROMPT_OPTIMIZER_ROLE_NOT_FOUND', `prompt-optimizer: unknown role "${request.role}"; pick one of the listed roles`)
     }
     const currentText = await this.readRoleText(fs, entry, signal)
-    const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
-    const messages: Message[] = [createUserMessage({
-      content: [{ type: 'text', text: roleEvolutionUserInput(currentText, request.draft, request.optimized) }],
-      source: { kind: 'dsh-prompt-optimizer' },
-    })]
+    const pendingKey = `${request.sessionId}\u0000${request.role}`
     let definition: string
-    try {
-      using callDeadline = deadline(signal, this.config.timeoutMs, 'PROMPT_OPTIMIZER_TIMEOUT')
-      let call: Awaited<ReturnType<typeof this.ctx.llm.prepareCall>>
+    if (request.confirm === true) {
+      definition = this.pendingEvolutions.get(pendingKey) ?? fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_NOT_PENDING', 'prompt-optimizer: confirm requires a preceding preview for this session and role')
+      this.validateRoleDefinition(definition)
+    } else {
+      const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+      const messages: Message[] = [createUserMessage({
+        content: [{ type: 'text', text: roleEvolutionUserInput(currentText, request.draft, request.optimized) }],
+        source: { kind: 'dsh-prompt-optimizer' },
+      })]
       try {
-        call = await this.ctx.llm.prepareCall({ ...route, maxTokens: this.config.maxOutputTokens }, callDeadline.signal)
-      } catch (error) {
-        callDeadline.signal.throwIfAborted()
-        if (error instanceof LlmError && error.code === 'NO_ADAPTER') {
-          fail('PROMPT_OPTIMIZER_NO_ADAPTER', `prompt-optimizer: provider "${route.provider}" has no active model adapter in this app; pick an available model in the composer or configure provider and model together`)
+        using callDeadline = deadline(signal, this.config.timeoutMs, 'PROMPT_OPTIMIZER_TIMEOUT')
+        let call: Awaited<ReturnType<typeof this.ctx.llm.prepareCall>>
+        try {
+          call = await this.ctx.llm.prepareCall({ ...route, maxTokens: this.config.maxOutputTokens }, callDeadline.signal)
+        } catch (error) {
+          callDeadline.signal.throwIfAborted()
+          if (error instanceof LlmError && error.code === 'NO_ADAPTER') {
+            fail('PROMPT_OPTIMIZER_NO_ADAPTER', `prompt-optimizer: provider "${route.provider}" has no active model adapter in this app; pick an available model in the composer or configure provider and model together`)
+          }
+          throw error
         }
-        throw error
-      }
-      const llmOptions: GenerateOptions = {
-        ...call.config,
-        messages,
-        system: roleEvolutionSystemPrompt(),
-        sessionId: request.sessionId,
-        signal: callDeadline.signal,
-      }
-      callDeadline.signal.throwIfAborted()
-      const assembler = new BlockAssembler()
-      for await (const chunk of call.stream(llmOptions)) {
+        const llmOptions: GenerateOptions = {
+          ...call.config,
+          messages,
+          system: roleEvolutionSystemPrompt(),
+          sessionId: request.sessionId,
+          signal: callDeadline.signal,
+        }
         callDeadline.signal.throwIfAborted()
-        assembler.push(chunk)
+        const assembler = new BlockAssembler()
+        for await (const chunk of call.stream(llmOptions)) {
+          callDeadline.signal.throwIfAborted()
+          assembler.push(chunk)
+        }
+        callDeadline.signal.throwIfAborted()
+        terminalFinish(assembler.finish)
+        definition = responseText(assembler.blocks()).trim()
+        this.validateRoleDefinition(definition)
+      } catch (error) {
+        signal.throwIfAborted()
+        if (isTypedFailure(error)) throw error
+        fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_FAILED', `prompt-optimizer: evolving role "${request.role}" failed: ${error instanceof Error ? error.message : String(error)}`)
       }
-      callDeadline.signal.throwIfAborted()
-      terminalFinish(assembler.finish)
-      definition = responseText(assembler.blocks()).trim()
-      if (definition === '' || !definition.startsWith('# ') || definition.length > ROLE_MAX_CHARS) {
-        fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_INVALID', 'prompt-optimizer: the rewritten role definition must be non-empty, start with an H1 heading, and stay within the character cap')
+      this.pendingEvolutions.set(pendingKey, definition)
+      return {
+        role: request.role,
+        name: roleNameOf(definition) ?? request.role,
+        bytes: Buffer.byteLength(definition, 'utf8'),
+        pendingDefinition: definition,
       }
+    }
+    try {
       const backupTarget = await fs.resolve(`${entry.target}.bak`, { signal })
       await fs.writeText(backupTarget, currentText, undefined, signal)
       await fs.writeText(entry.target, definition, undefined, signal)
@@ -806,9 +830,25 @@ export default class PromptOptimizer extends Service {
       if (isTypedFailure(error)) throw error
       fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_FAILED', `prompt-optimizer: evolving role "${request.role}" failed: ${error instanceof Error ? error.message : String(error)}`)
     }
+    this.pendingEvolutions.delete(pendingKey)
     const bytes = Buffer.byteLength(definition, 'utf8')
     appendPluginRecord(session, 'plugin:prompt-optimizer/role-evolved', { role: request.role, bytes })
     return { role: request.role, name: roleNameOf(definition) ?? request.role, bytes }
+  }
+
+  /** Definitions pending a confirming call, keyed `${sessionId}\u0000${role}`. */
+  private readonly pendingEvolutions = new Map<string, string>()
+
+  /**
+   * Re-run the evolved-definition shape checks both phases share.
+   * @param definition - model-produced role definition text.
+   * @throws when the definition is empty, lacks its H1 heading, or exceeds the
+   * character cap.
+   */
+  private validateRoleDefinition(definition: string): void {
+    if (definition === '' || !definition.startsWith('# ') || definition.length > ROLE_MAX_CHARS) {
+      fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_INVALID', 'prompt-optimizer: the rewritten role definition must be non-empty, start with an H1 heading, and stay within the character cap')
+    }
   }
 
   /**

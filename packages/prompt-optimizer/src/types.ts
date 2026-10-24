@@ -49,6 +49,8 @@ export interface PromptRoleEvolveRequest {
   readonly draft: string
   /** Complete optimized text the round produced. */
   readonly optimized: string
+  /** True commits the pending preview for this session and role; absent/false returns a preview without writing. */
+  readonly confirm?: boolean
 }
 
 /** Outcome of one role-definition evolution. */
@@ -57,8 +59,10 @@ export interface PromptRoleEvolveResult {
   readonly role: string
   /** Human-facing role name parsed from the new definition's first heading. */
   readonly name: string
-  /** UTF-8 byte size of the written definition. */
+  /** UTF-8 byte size of the previewed or written definition. */
   readonly bytes: number
+  /** The previewed definition awaiting confirmation; present only on preview results. */
+  readonly pendingDefinition?: string
 }
 
 /** Wire request for one optimization round over a conversation draft. */

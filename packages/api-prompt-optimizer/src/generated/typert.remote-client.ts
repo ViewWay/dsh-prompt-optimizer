@@ -61,12 +61,14 @@ const _evolveRole_parameter_0 = () => (_evolveRole_parameter_0$value ??= z.objec
   'role': z.string().readonly().describe('Role slug whose `<slug>.md` definition styled the round and is rewritten.'),
   'draft': z.string().readonly().describe('Complete draft text the round optimized.'),
   'optimized': z.string().readonly().describe('Complete optimized text the round produced.'),
+  'confirm': z.boolean().readonly().optional().describe('True commits the pending preview for this session and role; absent/false returns a preview without writing.'),
 }))
 let _evolveRole_result$value
 const _evolveRole_result = () => (_evolveRole_result$value ??= z.object({
   'role': z.string().readonly().describe('Role slug whose definition was rewritten.'),
   'name': z.string().readonly().describe('Human-facing role name parsed from the new definition\'s first heading.'),
-  'bytes': z.number().readonly().describe('UTF-8 byte size of the written definition.'),
+  'bytes': z.number().readonly().describe('UTF-8 byte size of the previewed or written definition.'),
+  'pendingDefinition': z.string().readonly().optional().describe('The previewed definition awaiting confirmation; present only on preview results.'),
 }))
 let _optimize_parameter_0$value
 const _optimize_parameter_0 = () => (_optimize_parameter_0$value ??= z.object({
@@ -145,6 +147,7 @@ const _evolveRole_parameter_0_strict = () => (_evolveRole_parameter_0_strict$val
   'role': z.string().readonly(),
   'draft': z.string().readonly(),
   'optimized': z.string().readonly(),
+  'confirm': z.boolean().readonly().optional(),
 }))
 let _optimize_parameter_0_strict$value
 const _optimize_parameter_0_strict = () => (_optimize_parameter_0_strict$value ??= z.strictObject({
@@ -189,13 +192,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptRoleEvolveRequest',
             create: _evolveRole_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, role: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' } }, required: ['sessionId', 'role', 'draft', 'optimized'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, role: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['sessionId', 'role', 'draft', 'optimized'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptRoleEvolveRequest',
             create: _evolveRole_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, role: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' } }, required: ['sessionId', 'role', 'draft', 'optimized'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, role: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['sessionId', 'role', 'draft', 'optimized'], additionalProperties: false },
           },
         },
       ],
@@ -205,7 +208,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptRoleEvolveResult',
         create: _evolveRole_result,
         description: 'the rewritten role\'s slug, parsed name, and written byte size.',
-        jsonSchema: { type: 'object', properties: { role: { type: 'string' }, name: { type: 'string' }, bytes: { type: 'number' } }, required: ['role', 'name', 'bytes'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { role: { type: 'string' }, name: { type: 'string' }, bytes: { type: 'number' }, pendingDefinition: { type: 'string' } }, required: ['role', 'name', 'bytes'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 149, column: 9 },
     },

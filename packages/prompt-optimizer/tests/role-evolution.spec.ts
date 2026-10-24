@@ -1,4 +1,4 @@
-/** Role-definition evolution: rewrite round, .bak retention, typed failures. */
+/** Role-definition evolution: preview/confirm phases, .bak retention, typed failures. */
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
@@ -84,26 +84,28 @@ interface RoleFile {
 }
 
 /** Fake the `fs` service over in-memory files plus a write-recording map. */
-function writableFs(files: readonly RoleFile[]): { service: unknown; written: Map<string, string> } {
+function writableFs(files: readonly RoleFile[]): {
+  service: unknown
+  written: Map<string, string>
+  read: (target: string) => Promise<string>
+} {
   const byName = new Map(files.map(file => [file.name, file]))
   const written = new Map<string, string>()
-  return {
-    written,
-    service: {
-      resolve: async (path: string) => path,
-      listDir: async (dir: string) => [...byName.values()]
-        .map(file => ({ name: file.name, type: 'file', target: `${dir}/${file.name}` })),
-      readText: async (target: string) => {
-        const file = byName.get(target.slice('/roles/'.length))
-        if (file === undefined) throw new Error(`ENOENT: ${target}`)
-        return written.get(target) ?? file.text
-      },
-      writeText: async (target: string, content: string) => {
-        written.set(target, content)
-        return {} as never
-      },
+  const service = {
+    resolve: async (path: string) => path,
+    listDir: async (dir: string) => [...byName.values()]
+      .map(file => ({ name: file.name, type: 'file', target: `${dir}/${file.name}` })),
+    readText: async (target: string) => {
+      const file = byName.get(target.slice('/roles/'.length))
+      if (file === undefined) throw new Error(`ENOENT: ${target}`)
+      return written.get(target) ?? file.text
+    },
+    writeText: async (target: string, content: string) => {
+      written.set(target, content)
+      return {} as never
     },
   }
+  return { written, service, read: target => service.readText(target) }
 }
 
 async function withEvolve(
@@ -113,6 +115,7 @@ async function withEvolve(
   ctx: Context
   adapter: SequencedAdapter
   written: Map<string, string>
+  read: (target: string) => Promise<string>
   sessionId: SessionId
 }> {
   const ctx = new Context()
@@ -129,33 +132,69 @@ async function withEvolve(
     header: { config: { provider: 'current-route', model: 'current-model' } },
     reason: 'initial',
   })
-  return { ctx, adapter, written: fs.written, sessionId: session.id }
+  return { ctx, adapter, written: fs.written, read: fs.read, sessionId: session.id }
 }
 
 describe('PromptOptimizer.evolveRole', () => {
-  it('rewrites the definition, keeps the old one as .bak, and logs the evolution', async () => {
-    const { ctx, adapter, written, sessionId } = await withEvolve(definitionScript(EVOLVED_DEFINITION))
+  it('previews the rewrite and writes nothing', async () => {
+    const { ctx, adapter, written, read, sessionId } = await withEvolve(definitionScript(EVOLVED_DEFINITION))
 
-    const result = await ctx.promptOptimizer.evolveRole(
+    const preview = await ctx.promptOptimizer.evolveRole(
       { sessionId, role: 'imp-code-reviewer', draft: '帮我看看这段代码', optimized: '优化后的提示词' },
+      new AbortController().signal,
+    )
+
+    expect(preview).toEqual({
+      role: 'imp-code-reviewer',
+      name: '代码评审员',
+      bytes: Buffer.byteLength(EVOLVED_DEFINITION, 'utf8'),
+      pendingDefinition: EVOLVED_DEFINITION,
+    })
+    expect(written.size).toBe(0)
+    await expect(read('/roles/imp-code-reviewer.md')).resolves.toBe(REVIEWER_TEXT)
+    await expect(read('/roles/imp-code-reviewer.md.bak')).rejects.toThrow('ENOENT')
+    expect(roleEvolvedRecords(ctx.sessions.get(sessionId)!.snapshotEvents())).toHaveLength(0)
+    expect(adapter.requests[0]?.system).toContain('role definition maintainer')
+    const material = adapter.requests[0]?.messages[0]?.content[0]
+    expect(material?.type === 'text' && material.text).toContain('你是一名代码评审员，负责审查代码变更。')
+    expect(material?.type === 'text' && material.text).toContain('帮我看看这段代码')
+    expect(material?.type === 'text' && material.text).toContain('优化后的提示词')
+  })
+
+  it('commits the pending preview: one model round total, .bak retained, evolution logged', async () => {
+    const { ctx, adapter, written, read, sessionId } = await withEvolve(definitionScript(EVOLVED_DEFINITION))
+
+    const preview = await ctx.promptOptimizer.evolveRole(
+      { sessionId, role: 'imp-code-reviewer', draft: '帮我看看这段代码', optimized: '优化后的提示词' },
+      new AbortController().signal,
+    )
+    const result = await ctx.promptOptimizer.evolveRole(
+      { sessionId, role: 'imp-code-reviewer', draft: '帮我看看这段代码', optimized: '优化后的提示词', confirm: true },
       new AbortController().signal,
     )
 
     expect(result).toEqual({
       role: 'imp-code-reviewer',
       name: '代码评审员',
-      bytes: Buffer.byteLength(EVOLVED_DEFINITION, 'utf8'),
+      bytes: preview.bytes,
     })
+    expect(result).not.toHaveProperty('pendingDefinition')
+    expect(adapter.requests).toHaveLength(1)
     expect(written.get('/roles/imp-code-reviewer.md.bak')).toBe(REVIEWER_TEXT)
-    expect(written.get('/roles/imp-code-reviewer.md')).toBe(EVOLVED_DEFINITION)
+    await expect(read('/roles/imp-code-reviewer.md')).resolves.toBe(EVOLVED_DEFINITION)
     const events = roleEvolvedRecords(ctx.sessions.get(sessionId)!.snapshotEvents())
     expect(events).toHaveLength(1)
     expect(events[0]).toEqual({ role: 'imp-code-reviewer', bytes: result.bytes })
-    expect(adapter.requests[0]?.system).toContain('role definition maintainer')
-    const material = adapter.requests[0]?.messages[0]?.content[0]
-    expect(material?.type === 'text' && material.text).toContain('你是一名代码评审员，负责审查代码变更。')
-    expect(material?.type === 'text' && material.text).toContain('帮我看看这段代码')
-    expect(material?.type === 'text' && material.text).toContain('优化后的提示词')
+  })
+
+  it('rejects a confirm without a preceding preview before any dispatch or write', async () => {
+    const { ctx, adapter, written, sessionId } = await withEvolve(definitionScript(EVOLVED_DEFINITION))
+
+    await expect(ctx.promptOptimizer.evolveRole(
+      { sessionId, role: 'imp-code-reviewer', draft: '草稿', optimized: '结果', confirm: true }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_ROLE_EVOLVE_NOT_PENDING' })
+    expect(adapter.requests).toHaveLength(0)
+    expect(written.size).toBe(0)
   })
 
   it('rejects an unlisted role before any dispatch or write', async () => {
