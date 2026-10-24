@@ -20,6 +20,7 @@ import type { ContentBlock, FinishReason, GenerateOptions, Message, TokenUsage }
 import { deadline, MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { fileURLToPath } from 'node:url'
 import { appendPluginRecord } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -154,7 +155,7 @@ export interface Config {
   readonly model?: string
   /** Whether domain-detection priors condition the system prompt on the draft's technical domain. */
   readonly domainPriors: boolean
-  /** Optional absolute directory of `<slug>.md` role definitions enabling role-styled rewrites. */
+  /** Optional absolute directory of `<slug>.md` role definitions enabling role-styled rewrites; defaults to the role library bundled with this package. */
   readonly rolesDir?: string
   /** Optional role slug styling every request that carries no explicit `role`. */
   readonly defaultRole?: string
@@ -184,6 +185,13 @@ const ROLES_MAX_ENTRIES = 500
 const ROLE_MAX_CHARS = 8000
 /** Longest output-language name accepted on one optimize request. */
 const LANGUAGE_MAX_CHARS = 40
+/**
+ * Absolute path of the role library bundled inside this package (`roles/`),
+ * used whenever the deployment configures no `rolesDir` of its own. Resolved
+ * from the module URL so it holds identically for `src/` tests and `lib/`
+ * installs.
+ */
+const BUNDLED_ROLES_DIR = fileURLToPath(new URL('../roles', import.meta.url))
 
 /** Persisted library row; the storage schema validates this plain shape. */
 interface LibraryRow {
@@ -582,6 +590,7 @@ export default class PromptOptimizer extends Service {
         provider: route.provider,
         model: route.model,
         ...(role !== undefined ? { role: role.id } : {}),
+        ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
         ...(first.usage !== undefined ? { usage: first.usage } : {}),
       }
     }
@@ -610,6 +619,7 @@ export default class PromptOptimizer extends Service {
       provider: route.provider,
       model: route.model,
       ...(role !== undefined ? { role: role.id } : {}),
+      ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
       ...(usage !== undefined ? { usage } : {}),
     }
   }
@@ -738,8 +748,8 @@ export default class PromptOptimizer extends Service {
    * @param signal - caller cancellation.
    * @returns every `<slug>.md` role summary the directory holds; non-slug
    * files such as `README.md` are directory metadata, not roles.
-   * @throws when `rolesDir` is unset, no filesystem service is composed, or
-   * the directory cannot be listed or a definition cannot be read.
+   * @throws when no filesystem service is composed, or the directory cannot
+   * be listed or a definition cannot be read.
    */
   async listRoles(signal: AbortSignal): Promise<readonly PromptRoleSummary[]> {
     signal.throwIfAborted()
@@ -781,21 +791,26 @@ export default class PromptOptimizer extends Service {
    * (`confirm: true`) runs no model round, re-validates the pending
    * definition, then writes the previous version to `<slug>.md.bak` (which
    * never matches the role-file pattern and so never joins a listing) before
-   * the new definition replaces `<slug>.md`.
+   * the new definition replaces `<slug>.md`. Evolution writes only into a
+   * configured `rolesDir`; the bundled library is read-only.
    * @param request - producing session, role slug, the round's two texts, and
    * the phase selector.
    * @param signal - caller cancellation.
    * @returns the rewritten role's slug, parsed name, byte size, and — for a
    * preview — the pending definition itself.
-   * @throws when the session is gone, the role is not listed, the model round
-   * fails, a confirm arrives without a pending preview, or the produced
-   * definition fails validation.
+   * @throws when the session is gone, `rolesDir` is unset (the bundled
+   * library is read-only), the role is not listed, the model round fails, a
+   * confirm arrives without a pending preview, or the produced definition
+   * fails validation.
    */
   async evolveRole(request: PromptRoleEvolveRequest, signal: AbortSignal): Promise<PromptRoleEvolveResult> {
     signal.throwIfAborted()
     const session = this.ctx.sessions.get(request.sessionId)
     if (session === undefined) {
       fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
+    }
+    if (this.config.rolesDir === undefined) {
+      fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_READONLY', 'prompt-optimizer: the bundled role library is read-only; point rolesDir at your own directory of role definitions to evolve them')
     }
     const { fs, entries } = await this.rolesEntries(signal)
     const entry = ROLE_ID_PATTERN.test(request.role)
@@ -968,23 +983,22 @@ export default class PromptOptimizer extends Service {
   }
 
   /**
-   * Resolve the configured roles directory and its definition-file entries.
+   * Resolve the roles directory — the configured `rolesDir`, else the bundled
+   * library — and its definition-file entries.
    * @param signal - caller cancellation.
    * @returns the filesystem service and every slug-named `<slug>.md` entry it
    * listed; other files are directory metadata and never candidates.
-   * @throws when `rolesDir` is unset, no filesystem service is composed, the
-   * directory cannot be resolved or listed, or it holds too many files.
+   * @throws when no filesystem service is composed, the directory cannot be
+   * resolved or listed, or it holds too many files.
    */
   private async rolesEntries(signal: AbortSignal): Promise<{ fs: FileSystem; entries: readonly FsDirEntry[] }> {
-    if (this.config.rolesDir === undefined) {
-      fail('PROMPT_OPTIMIZER_NO_ROLES_DIR', 'prompt-optimizer: rolesDir is not configured; point it at a directory of role definition files to use role-styled optimization')
-    }
+    const rolesDir = this.config.rolesDir ?? BUNDLED_ROLES_DIR
     const fs = this.ctx.get('fs')
     if (fs === undefined) {
       fail('PROMPT_OPTIMIZER_NO_FS', 'prompt-optimizer: no filesystem service is composed; add a dsh-fs implementation to load role definitions')
     }
     try {
-      const dir = await fs.resolve(this.config.rolesDir, { signal })
+      const dir = await fs.resolve(rolesDir, { signal })
       const listed = await fs.listDir(dir, signal)
       const entries = listed.filter(entry => entry.type === 'file' && ROLE_FILE_PATTERN.test(entry.name))
       // The cap governs role definition files; side files (README, .bak) must not trip it.

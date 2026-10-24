@@ -842,13 +842,13 @@ describe('PromptOptimizer role styling', () => {
     )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_ROLE_NOT_FOUND' })
   })
 
-  it('fails typed when rolesDir is not configured or no fs service is composed', async () => {
+  it('fails typed when no fs service is composed, even with the bundled fallback', async () => {
     const { ctx, sessionId } = await withAdapter(envelope('普通重写', []))
     await expect(ctx.promptOptimizer.optimize(
       { sessionId, text: '草稿', role: 'imp-code-reviewer' }, new AbortController().signal,
-    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_ROLES_DIR' })
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_FS' })
     await expect(ctx.promptOptimizer.listRoles(new AbortController().signal))
-      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_ROLES_DIR' })
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_FS' })
 
     const bare = new Context()
     onTestFinished(() => bare.fiber.dispose())
@@ -859,6 +859,34 @@ describe('PromptOptimizer role styling', () => {
     await bare.plugin(PromptOptimizer, { ...CONFIG, rolesDir: '/roles' })
     await expect(bare.promptOptimizer.listRoles(new AbortController().signal))
       .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_FS' })
+  })
+
+  it('falls back to the bundled role library when rolesDir is unset, and keeps it read-only for evolution', async () => {
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(LlmRuntime)
+    const adapter = new SequencedAdapter([envelope('内置库重写', [])])
+    ctx.llm.registerAdapter(['current-route'], adapter)
+    const resolved: string[] = []
+    ctx.provide('fs', {
+      resolve: async (path: string) => { resolved.push(path); return path },
+      listDir: async () => [{ name: 'code-reviewer.md', type: 'file', target: 'anywhere/code-reviewer.md' }],
+      readText: async () => '# 代码审查员（Code Reviewer）\n',
+    } as never)
+    await ctx.plugin(PromptOptimizer, { ...CONFIG })
+    const session = ctx.sessions.create(SessionId('bundled-roles'))
+    session.append('request/header', {
+      header: { config: { provider: 'current-route', model: 'current-model' } },
+      reason: 'initial',
+    })
+
+    expect(await ctx.promptOptimizer.listRoles(new AbortController().signal))
+      .toEqual([{ id: 'code-reviewer', name: '代码审查员' }])
+    expect(resolved[0]).toMatch(/roles$/)
+    await expect(ctx.promptOptimizer.evolveRole(
+      { sessionId: session.id, role: 'code-reviewer', draft: '草稿', optimized: '优化' }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_ROLE_EVOLVE_READONLY' })
   })
 
   it('lists roles with heading-derived names, slug fallback, in slug order', async () => {
@@ -942,6 +970,7 @@ describe('skill-aware optimization', () => {
     )
 
     expect(result.optimizedText).toBe('优化后的提示词')
+    expect(result.skills).toEqual(['dsh-pre-push-checks'])
     const system = adapter.requests[0]!.system
     expect(system).toContain('- dsh-pre-push-checks — Run the repository pre-push check suite before pushing. [runtime]; params: scope=检查范围')
     expect(system).toContain('never invent, rename, or guess skill names')

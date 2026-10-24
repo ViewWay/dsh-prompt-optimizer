@@ -329,6 +329,17 @@ describe('PreviewPanel', () => {
     expect(apply).toHaveBeenCalledExactlyOnceWith(SESSION)
   })
 
+  it('shows the skill hints that conditioned the round', () => {
+    render(<PreviewPanel {...panelProps({ ...READY, result: { ...RESULT, skills: ['dsh-pre-push-checks', 'xget'] } })} />)
+    expect(screen.getByTestId('optimization-skills').textContent)
+      .toBe('参考技能：dsh-pre-push-checks, xget')
+  })
+
+  it('omits the skill line when the round had no hints', () => {
+    render(<PreviewPanel {...panelProps(READY)} />)
+    expect(screen.queryByTestId('optimization-skills')).toBeNull()
+  })
+
   it('annotates mechanical acceptance criteria with their check command', () => {
     render(<PreviewPanel {...panelProps(READY)} />)
     const acceptance = screen.getByTestId('optimization-acceptance')

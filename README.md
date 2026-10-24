@@ -9,7 +9,7 @@ A standalone, independently distributed plugin family for the DeepSeek Harness t
 ## Features
 
 - One-click **Optimize** button on the input box plus domain recommendation chips; multi-round optimization with retry and per-round diff preview
-- **Role library** (`<slug>.md` files under `rolesDir`): list roles on demand, recommend by draft, re-run with an explicit role; set a default role in the settings page
+- **Role library** (`<slug>.md` files): a 164-role catalog ships inside the package and is used whenever `rolesDir` is unset; list roles on demand, recommend by draft, re-run with an explicit role; set a default role in the settings page
 - **Skill awareness** (`skillAware`): when a draft matches an installed skill, its name and description are folded into the meta-prompt so the output references those skills — guarded by exact-name constraints against hallucination
 - **Output language follows the agent UI language**: a Chinese interface yields Chinese prompts, English yields English, while code identifiers, paths and commands stay verbatim
 - Inline **Optimize** entry on queued (unsent) conversation items
@@ -50,7 +50,7 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 | `verifyTimeoutMs` | see source | Timeout for acceptance-check commands |
 | `domainPriors` | `true` | Inject priors based on the draft's technical domain |
 | `provider` / `model` | unset | Explicit model routing for optimization; the two must appear together |
-| `rolesDir` | unset | Role definition directory (`<slug>.md`); enables role selection and recommendation |
+| `rolesDir` | bundled catalog | Role definition directory override (`<slug>.md`); the shipped role library is used when unset and stays read-only for role evolution |
 | `defaultRole` | unset | Default role slug when none is specified; also settable in the settings page |
 | `skillAware` | `true` | Fold matched installed skills into the meta-prompt |
 
@@ -60,7 +60,7 @@ Optimization runs are recorded in the session's own event log; treat drafts acco
 
 - Every optimization round appends a `plugin:prompt-optimizer/llm-request` record containing the full draft text and the auxiliary system prompt.
 - Every check run appends a `plugin:prompt-optimizer/verify` record containing the executed command and its (redacted) output.
-- "Improve this role" rewrites the role definition file `<slug>.md` under the configured `rolesDir` on disk; the previous version is kept alongside it as `<slug>.md.bak`.
+- "Improve this role" rewrites the role definition file `<slug>.md` under the configured `rolesDir` on disk; the previous version is kept alongside it as `<slug>.md.bak`. The bundled default catalog is read-only: configure `rolesDir` to enable role evolution.
 
 If you paste secrets into a draft, expect them to appear in the session log.
 

@@ -92,6 +92,7 @@ const _optimize_result = () => (_optimize_result$value ??= z.object({
   'provider': z.string().readonly().describe('Exact provider route that produced the result.'),
   'model': z.string().readonly().describe('Exact model id that produced the result.'),
   'role': z.string().readonly().optional().describe('Role slug that styled the round; absent when no role was requested.'),
+  'skills': z.array(z.string()).readonly().optional().describe('Names of the installed-skill hints that conditioned the round; absent when none matched.'),
   'usage': z.object({
     'inputTokens': z.number(),
     'outputTokens': z.number(),
@@ -271,7 +272,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeResult',
         create: _optimize_result,
         description: 'the parsed optimization result for preview.',
-        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 43, column: 9 },
     },

@@ -9,7 +9,7 @@
 ## 功能
 
 - 输入框「优化」按钮 + 领域推荐 chips 一键触发；多轮优化、失败重试、逐轮对比预览
-- 角色库（`rolesDir` 下的 `<slug>.md`）：角色按需列出、推荐、指定角色重跑；配置页可设默认角色
+- 角色库（`<slug>.md`）：包内自带 164 个角色的内置库，`rolesDir` 未配置时默认启用；角色按需列出、推荐、指定角色重跑；配置页可设默认角色
 - 技能感知（`skillAware`）：草稿命中已安装技能时，把技能名与简介并入元提示词，产出直接引用这些技能的提示词，并带防幻觉的精确命名约束
 - 多语言：优化产出的语言自动跟随 Agent 的界面语言设置（中文界面出中文提示词，English 界面出英文），代码标识符、路径与命令保持原样
 - 队列条目行内「优化」入口：对已排队未发送的消息直接优化
@@ -50,7 +50,7 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 | `verifyTimeoutMs` | 见源码 | 验收检查命令的超时 |
 | `domainPriors` | `true` | 按草稿的技术领域注入先验 |
 | `provider` / `model` | 未设置 | 显式指定优化用的模型路由，两者必须成对出现 |
-| `rolesDir` | 未设置 | 角色定义目录（`<slug>.md`）；设置后启用角色选择与推荐 |
+| `rolesDir` | 内置角色库 | 角色定义目录覆盖（`<slug>.md`）；未设置时使用随包分发的角色库（对「改进此角色」只读） |
 | `defaultRole` | 未设置 | 未显式指定角色时使用的默认角色 slug；配置页也可设置 |
 | `skillAware` | `true` | 把命中的已安装技能并入元提示词 |
 
@@ -60,7 +60,7 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 
 - 每一轮优化都会向会话追加一条 `plugin:prompt-optimizer/llm-request` 记录，包含完整草稿文本与辅助 system prompt。
 - 每次运行核验都会追加一条 `plugin:prompt-optimizer/verify` 记录，包含所执行的命令与其（已脱敏的）输出。
-- 「改进此角色」会重写所配置 `rolesDir` 下的角色定义文件 `<slug>.md`；旧版本保留在同目录的 `<slug>.md.bak`。
+- 「改进此角色」会重写所配置 `rolesDir` 下的角色定义文件 `<slug>.md`；旧版本保留在同目录的 `<slug>.md.bak`。内置默认角色库为只读：配置 `rolesDir` 后才能启用角色进化。
 
 向草稿中粘贴密钥等敏感内容时，应预期它们出现在会话日志里。
 

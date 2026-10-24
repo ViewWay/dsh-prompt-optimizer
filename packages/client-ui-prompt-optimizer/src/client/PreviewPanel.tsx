@@ -284,6 +284,11 @@ export function PreviewPanel(props: PreviewPanelProps) {
             {state.result.changes.map(change => <li key={change}>{change}</li>)}
           </ul>
           : null}
+        {ready && state.result.skills !== undefined && state.result.skills.length > 0
+          ? <p className={css.noChanges} data-testid="optimization-skills">
+            {t('skillsUsed', { skills: state.result.skills.join(', ') })}
+          </p>
+          : null}
         {ready && state.result.critique !== undefined && state.result.critique.length > 0
           ? <div className={css.critique}>
             <ul className={css.changes} data-testid="optimization-critique">

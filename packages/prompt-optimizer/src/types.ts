@@ -110,6 +110,8 @@ export interface PromptOptimizeResult {
   readonly model: string
   /** Role slug that styled the round; absent when no role was requested. */
   readonly role?: string
+  /** Names of the installed-skill hints that conditioned the round; absent when none matched. */
+  readonly skills?: readonly string[]
   /** Usage from the stream's `usage` chunk; absent until one arrives. */
   readonly usage?: TokenUsage
 }
