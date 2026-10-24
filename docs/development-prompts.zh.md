@@ -15,6 +15,7 @@
 - 仓库是独立分发的 dsh 插件家族（四包，见根 README）；桌面应用源码在同级 harness 检出（DSH_HARNESS_ROOT 默认 ../deepseek-harness-latest）。
 - 桌面 dev 模式：在 harness 检出里 `node_modules/.bin/pnpm run dev:desktop`（首次会全仓构建并下载 Electron）；dev home 在 `apps/desktop/.desktop-build/development/home`。
 - 插件启用方式：往 `…/home/profiles/desktop/cordis.patch.yml` 追加一个 `- insert:` 块，三行 id/name 分别是 prompt-optimizer→@deepseek-ai/dsh-experimental-prompt-optimizer、api-prompt-optimizer→@deepseek-ai/dsh-experimental-api-prompt-optimizer、ui-prompt-optimizer→@deepseek-ai/dsh-experimental-client-ui-prompt-optimizer（名字经 dev project 的依赖目录解析）。
+- 注意：上面三个 `@deepseek-ai/dsh-experimental-*` 名字是 harness 检出内置的实验副本（`packages/experimental/`，本仓库插件家族即由此抽出），按 P1 冒烟的是 harness 侧副本而非本仓库 `@yimiliya/dsh-*` 独立分发产物；若要冒烟本仓库产物，改用 `pnpm -r pack` 打出 tarball 后按根 README 的 tarball 路径安装 bundle。
 
 要求：
 1. 启用插件后重启桌面端，逐项冒烟：输入框「优化」按钮、预览面板（原始/优化对照、变更说明、验收准则）、mechanical 准则「运行核验」按钮、队列条目行内入口、设置页默认角色下拉。
