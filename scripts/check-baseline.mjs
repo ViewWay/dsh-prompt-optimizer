@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Baseline coherence gate. docs/compatibility.md is the contractual source of
-// truth for the @deepseek-ai/dsh-* baseline; this script fails when the CI
+// truth for the @deepseek-ai/dsh-* baseline; this script fails when a workflow
 // clone tag or any workspace package.json entry drifts from it.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -15,8 +15,8 @@ const rel = (file) => path.relative(root, file).split(path.sep).join('/');
 
 // docs/compatibility.md baseline table row: | `@deepseek-ai/dsh-*` | `<version>` | ... |
 const BASELINE_ROW = /^\|\s*`@deepseek-ai\/dsh-\*`\s*\|\s*`([^`\s]+)`\s*\|/m;
-// ci.yml harness clone: git clone --depth 1 --branch dsh-v<version> ...
-const CI_TAG = /--branch\s+dsh-v(\S+)/;
+// Workflow harness clones: git clone --depth 1 --branch dsh-v<version> ...
+const CLONE_TAG = /--branch\s+dsh-v(\S+)/;
 // Any version-pinned @deepseek-ai/dsh-* entry in a package.json dependency section.
 const DSH_ENTRY = /"(@deepseek-ai\/dsh-[^"]+)"\s*:\s*"([^"]*)"/g;
 
@@ -41,22 +41,21 @@ function parseBaseline() {
   return match[1];
 }
 
-function checkCiTag(baseline) {
-  const ci = path.join(root, '.github', 'workflows', 'ci.yml');
-  const lines = readText(ci).split(/\r?\n/);
+function checkWorkflowTag(baseline, file) {
+  const lines = readText(file).split(/\r?\n/);
   let tags = 0;
   lines.forEach((line, index) => {
-    const match = line.match(CI_TAG);
+    const match = line.match(CLONE_TAG);
     if (!match) return;
     tags += 1;
     if (match[1] !== baseline) {
       problems.push(
-        `${rel(ci)}:${index + 1}: clone tag "dsh-v${match[1]}" != baseline (expected "dsh-v${baseline}")`,
+        `${rel(file)}:${index + 1}: clone tag "dsh-v${match[1]}" != baseline (expected "dsh-v${baseline}")`,
       );
     }
   });
   if (tags === 0) {
-    problems.push(`${rel(ci)}: no "clone --branch dsh-v<baseline>" tag found`);
+    problems.push(`${rel(file)}: no "clone --branch dsh-v<baseline>" tag found`);
   }
   return tags;
 }
@@ -95,7 +94,10 @@ function checkPackages(baseline) {
 const baseline = parseBaseline();
 let checkedEntries = 0;
 if (baseline !== null) {
-  const tags = checkCiTag(baseline);
+  let tags = 0;
+  for (const workflow of ['ci.yml', 'release.yml']) {
+    tags += checkWorkflowTag(baseline, path.join(root, '.github', 'workflows', workflow));
+  }
   checkedEntries = tags + checkPackages(baseline);
 }
 
@@ -107,5 +109,5 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `baseline ok: @deepseek-ai/dsh-* ${baseline} consistent across docs/compatibility.md, ci.yml clone tag and workspace package.json (${checkedEntries} checks)`,
+  `baseline ok: @deepseek-ai/dsh-* ${baseline} consistent across docs/compatibility.md, workflow clone tags (ci.yml, release.yml) and workspace package.json (${checkedEntries} checks)`,
 );
