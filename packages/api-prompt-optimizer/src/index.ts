@@ -7,6 +7,8 @@ import type {
   PromptLibrarySaveRequest,
   PromptOptimizeRequest,
   PromptOptimizeResult,
+  PromptRoleEvolveRequest,
+  PromptRoleEvolveResult,
   PromptRoleRecommendation,
   PromptRoleRecommendRequest,
   PromptRoleSummary,
@@ -134,6 +136,24 @@ export default class PromptOptimizerController extends TypertRemoteService {
       signal.throwIfAborted()
       const reason = error instanceof Error ? error.message : String(error)
       throw new RemoteError('prompt-optimizer/roles-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Rewrite one role definition from the round's draft and optimized result.
+   * @param request - producing session, role slug, and the round's two texts.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   * @returns the rewritten role's slug, parsed name, and written byte size.
+   */
+  @Remote
+  async evolveRole(request: PromptRoleEvolveRequest, signal: AbortSignal): Promise<PromptRoleEvolveResult> {
+    signal.throwIfAborted()
+    try {
+      return await this.ctx.promptOptimizer.evolveRole(request, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/role-evolve-failed', reason, { reason }, { cause: error })
     }
   }
 }

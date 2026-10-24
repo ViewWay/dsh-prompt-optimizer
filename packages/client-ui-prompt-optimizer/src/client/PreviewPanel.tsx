@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, IconCheckOutlineRegular, IconCloseOutlineRegular, IconRefreshOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
+import type { PromptRoleEvolveResult, PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
 import type { PromptOptimizationPreview, OptimizationSnapshot } from './optimization.ts'
 import { usePromptRoles } from './use-prompt-roles.ts'
 import { RoleSelector } from './RoleSelector.tsx'
@@ -29,6 +29,13 @@ export interface PreviewPanelActions {
   verifyCheck: (sessionId: PromptOptimizationPreview['sessionId'], criterion: string, command: string) => Promise<PromptVerifyResult>
   /** Save the accepted result into the durable prompt library. */
   saveToLibrary: (sessionId: PromptOptimizationPreview['sessionId'], title: string, text: string) => Promise<void>
+  /** Rewrite the round's role definition from the round's materials; resolves to the new role summary fields. */
+  evolveRole: (
+    sessionId: PromptOptimizationPreview['sessionId'],
+    role: string,
+    draft: string,
+    optimized: string,
+  ) => Promise<PromptRoleEvolveResult>
 }
 
 /** Inject face shared by the mount: preview verbs plus the state hook source. */
@@ -97,14 +104,25 @@ interface LibraryState {
 
 const LIBRARY_IDLE: LibraryState = { saving: false, saved: false, error: undefined }
 
+/** Role-evolution button view state. */
+interface EvolutionState {
+  readonly running: boolean
+  readonly doneName: string | undefined
+  readonly error: string | undefined
+}
+
+const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, error: undefined }
+
 /** Render one Session's optimization preview in the composer seat. */
 export function PreviewPanel(props: PreviewPanelProps) {
   const { matched, apply, regenerate, regenerateAsSystem, regenerateAsRole, cancel, loadRoles } = props
-  const { verifyCheck, saveToLibrary, useOptimization, t } = props
+  const { verifyCheck, saveToLibrary, evolveRole, useOptimization, t } = props
   const state = useOptimization(snapshot => snapshot[matched.sessionId])
-  const roles = usePromptRoles(loadRoles)
+  const [rolesRevision, setRolesRevision] = useState(0)
+  const roles = usePromptRoles(loadRoles, rolesRevision)
   const [checks, setChecks] = useState<Record<string, CheckState>>({})
   const [library, setLibrary] = useState<LibraryState>(LIBRARY_IDLE)
+  const [evolution, setEvolution] = useState<EvolutionState>(EVOLUTION_IDLE)
   const [critiqueCopyFailed, setCritiqueCopyFailed] = useState(false)
   if (state === undefined) return null
   const ready = state.phase === 'ready' && state.result !== undefined
@@ -150,6 +168,23 @@ export function PreviewPanel(props: PreviewPanelProps) {
     })()
   }
 
+  const evolve = (): void => {
+    const role = state.role
+    const result = state.result
+    if (role === undefined || result === undefined || evolution.running) return
+    setEvolution({ running: true, doneName: undefined, error: undefined })
+    void (async () => {
+      try {
+        const evolved = await evolveRole(matched.sessionId, role, state.draft, result.optimizedText)
+        setEvolution({ running: false, doneName: evolved.name, error: undefined })
+        setRolesRevision(revision => revision + 1)
+      } catch (failure) {
+        const message = failure instanceof Error ? failure.message : String(failure)
+        setEvolution({ running: false, doneName: undefined, error: message })
+      }
+    })()
+  }
+
   return (
     <div className={css.frame}>
       <section className={css.card} aria-label={t('previewTitle')}>
@@ -172,6 +207,24 @@ export function PreviewPanel(props: PreviewPanelProps) {
             : state.role !== undefined
               ? <span className={css.roleBadge} data-testid="optimization-role">{t('roleUsed', { role: state.role })}</span>
               : null}
+          {state.role !== undefined
+            ? <>
+              <Button
+                size="sm" type="button"
+                disabled={!ready || evolution.running}
+                onClick={() => { evolve() }}
+                data-testid="evolve-role"
+              >
+                {t('evolveRole')}
+              </Button>
+              {evolution.doneName !== undefined
+                ? <span className={css.passed} data-testid="evolve-role-done">{t('evolveRoleDone', { name: evolution.doneName })}</span>
+                : null}
+              {evolution.error !== undefined
+                ? <span className={css.failed} role="alert" data-testid="evolve-role-error">{t('evolveRoleFailed')}</span>
+                : null}
+            </>
+            : null}
         </header>
         <div className={css.body}>
           <div className={css.column}>

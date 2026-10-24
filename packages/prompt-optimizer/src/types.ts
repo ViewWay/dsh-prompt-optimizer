@@ -39,6 +39,28 @@ export interface PromptRoleRecommendRequest {
   readonly text?: string
 }
 
+/** Wire request to rewrite one role definition from a completed round's materials. */
+export interface PromptRoleEvolveRequest {
+  /** Session that produced the round; owns the evolution log and route fallback. */
+  readonly sessionId: SessionId
+  /** Role slug whose `<slug>.md` definition styled the round and is rewritten. */
+  readonly role: string
+  /** Complete draft text the round optimized. */
+  readonly draft: string
+  /** Complete optimized text the round produced. */
+  readonly optimized: string
+}
+
+/** Outcome of one role-definition evolution. */
+export interface PromptRoleEvolveResult {
+  /** Role slug whose definition was rewritten. */
+  readonly role: string
+  /** Human-facing role name parsed from the new definition's first heading. */
+  readonly name: string
+  /** UTF-8 byte size of the written definition. */
+  readonly bytes: number
+}
+
 /** Wire request for one optimization round over a conversation draft. */
 export interface PromptOptimizeRequest {
   /** Session whose draft is being optimized; owns the request log and route fallback. */

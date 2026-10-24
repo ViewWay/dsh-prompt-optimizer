@@ -13,6 +13,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   PromptOptimizeTarget,
   PromptOptimizerSettings as PromptOptimizerSettingsSection,
+  PromptRoleEvolveResult,
   PromptRoleRecommendation,
   PromptRoleSummary,
   PromptVerifyResult,
@@ -232,6 +233,13 @@ function registerUi(ctx: Context): void {
     saveToLibrary: async (sessionId: SessionId, title: string, text: string): Promise<void> => {
       const result = await ctx.remote.promptOptimizer.savePrompt({ sessionId, title, text }, new AbortController().signal)
       if (!result.ok) throw new Error(result.error.message)
+    },
+    evolveRole: async (sessionId: SessionId, role: string, draft: string, optimized: string): Promise<PromptRoleEvolveResult> => {
+      const result = await ctx.remote.promptOptimizer.evolveRole(
+        { sessionId, role, draft, optimized }, new AbortController().signal,
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
     },
     cancel: (sessionId: SessionId): void => { dismiss(sessionId) },
   }

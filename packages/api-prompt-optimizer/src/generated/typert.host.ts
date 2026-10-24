@@ -24,6 +24,7 @@ export const TYPERT = {
           { kind: 'method', name: 'listPrompts', signature: '@Remote async listPrompts(signal: AbortSignal): Promise<readonly PromptLibraryEntry[]>', summary: 'List the prompt library\'s most recent entries, newest first.', jsDoc: '/** List the prompt library\'s most recent entries, newest first. */' },
           { kind: 'method', name: 'listRoles', signature: '@Remote async listRoles(signal: AbortSignal): Promise<readonly PromptRoleSummary[]>', summary: 'List the configured roles directory\'s selectable role definitions.', jsDoc: '/** List the configured roles directory\'s selectable role definitions. */' },
           { kind: 'method', name: 'recommendRoles', signature: '@Remote async recommendRoles(request: PromptRoleRecommendRequest, signal: AbortSignal): Promise<readonly PromptRoleRecommendation[]>', summary: 'Recommend roles for the request context (draft plus pending inbox).', jsDoc: '/** Recommend roles for the request context (draft plus pending inbox). */' },
+          { kind: 'method', name: 'evolveRole', signature: '@Remote async evolveRole(request: PromptRoleEvolveRequest, signal: AbortSignal): Promise<PromptRoleEvolveResult>', summary: 'Rewrite one role definition from the round\'s draft and optimized result.', jsDoc: '/** Rewrite one role definition from the round\'s draft and optimized result. */' },
         ],
         types: [],
       },

@@ -11,6 +11,8 @@ import {
   optimizerSystemPromptForSystem,
   optimizerUserInput,
   parseOptimizerResponse,
+  roleEvolutionSystemPrompt,
+  roleEvolutionUserInput,
 } from '../src/meta-prompt.ts'
 import type { PromptRoleRef } from '../src/meta-prompt.ts'
 import type { SkillHint } from '../src/skills.ts'
@@ -69,6 +71,48 @@ describe('optimizerUserInput', () => {
     expect(firstIndex).toBeLessThan(secondIndex)
     expect(secondIndex).toBeLessThan(draftIndex)
     expect(input).toContain('meaningfully different revision')
+  })
+})
+
+describe('roleEvolutionSystemPrompt', () => {
+  it('pins the maintainer role and the definition-file output contract', () => {
+    const prompt = roleEvolutionSystemPrompt()
+    expect(prompt).toContain('You are a role definition maintainer.')
+    expect(prompt).toContain('# 中文名（English）')
+    expect(prompt).toContain('no code fences')
+    expect(prompt).toContain('Output only the definition file itself')
+  })
+
+  it('pins the seven-section structure, language, and length bounds', () => {
+    const prompt = roleEvolutionSystemPrompt()
+    for (const section of ['角色设定', '背景', '技能', '工作方式', '输出格式', '回答风格', '回答限制']) {
+      expect(prompt).toContain(`## ${section}`)
+    }
+    expect(prompt.indexOf('## 角色设定')).toBeLessThan(prompt.indexOf('## 回答限制'))
+    expect(prompt).toContain('250 and 900')
+    expect(prompt).toContain('in Chinese')
+  })
+
+  it('forbids invented experience and tool or command names', () => {
+    const prompt = roleEvolutionSystemPrompt()
+    expect(prompt).toContain('never invent experiences')
+    expect(prompt).toContain('Never mention any tool name or command name')
+  })
+})
+
+describe('roleEvolutionUserInput', () => {
+  it('frames the three materials in definition, draft, optimized order', () => {
+    const input = roleEvolutionUserInput('# 代码评审员\n定义', '草稿', '优化结果')
+    const definitionIndex = input.indexOf('# 代码评审员')
+    const draftIndex = input.indexOf('草稿')
+    const optimizedIndex = input.indexOf('优化结果')
+    expect(definitionIndex).toBeGreaterThan(-1)
+    expect(definitionIndex).toBeLessThan(draftIndex)
+    expect(draftIndex).toBeLessThan(optimizedIndex)
+    expect(input).toContain('--- current role definition ---')
+    expect(input).toContain('--- draft the round optimized ---')
+    expect(input).toContain('--- optimized result ---')
+    expect(input.endsWith('Output the complete rewritten role definition file only.')).toBe(true)
   })
 })
 

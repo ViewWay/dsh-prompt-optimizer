@@ -8,6 +8,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
+import { join } from 'node:path'
 import { BlockAssembler, createUserMessage, LlmError } from '@deepseek-ai/dsh-llm'
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -36,6 +37,8 @@ import type {
   PromptOptimizeRequest,
   PromptOptimizeResult,
   PromptOptimizeTarget,
+  PromptRoleEvolveRequest,
+  PromptRoleEvolveResult,
   PromptRoleRecommendation,
   PromptRoleRecommendRequest,
   PromptRoleSummary,
@@ -50,6 +53,8 @@ import {
   optimizerSystemPromptForSystem,
   optimizerUserInput,
   parseOptimizerResponse,
+  roleEvolutionSystemPrompt,
+  roleEvolutionUserInput,
 } from './meta-prompt.ts'
 import type { PromptRoleRef, RoundConditioning } from './meta-prompt.ts'
 import { recommendRoles as rankRoles } from './recommend.ts'
@@ -64,6 +69,8 @@ declare module '@deepseek-ai/dsh-session/types' {
     'prompt-optimizer/llm-request': PromptOptimizerLlmRequestEventData
     /** Log-only record of one executed acceptance-criterion check command. */
     'prompt-optimizer/verify': PromptOptimizerVerifyEventData
+    /** Log-only record of one completed role-definition evolution. */
+    'prompt-optimizer/role-evolved': PromptOptimizerRoleEvolvedEventData
   }
 }
 
@@ -116,6 +123,14 @@ export interface PromptOptimizerVerifyEventData {
   readonly output: string
   /** Wall time from dispatch to completion. */
   readonly durationMs: number
+}
+
+/** One completed role-definition evolution, recorded after the write. */
+export interface PromptOptimizerRoleEvolvedEventData {
+  /** Slug of the role whose definition was rewritten. */
+  readonly role: string
+  /** UTF-8 byte size of the written definition. */
+  readonly bytes: number
 }
 
 /** Deployment-tunable execution controls for one optimization round. */
@@ -712,6 +727,82 @@ export default class PromptOptimizer extends Service {
   }
 
   /**
+   * Evolve one role definition: feed the current definition plus the round's
+   * draft and optimized result to one model round, validate the produced
+   * definition, then write the previous version to `<slug>.md.bak` (which
+   * never matches the role-file pattern and so never joins a listing) before
+   * the new definition replaces `<slug>.md`.
+   * @param request - producing session, role slug, and the round's two texts.
+   * @param signal - caller cancellation.
+   * @returns the rewritten role's slug, parsed name, and written byte size.
+   * @throws when the session is gone, the role is not listed, the model round
+   * fails, or the produced definition fails validation.
+   */
+  async evolveRole(request: PromptRoleEvolveRequest, signal: AbortSignal): Promise<PromptRoleEvolveResult> {
+    signal.throwIfAborted()
+    const session = this.ctx.sessions.get(request.sessionId)
+    if (session === undefined) {
+      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
+    }
+    const { fs, rolesDir, entries } = await this.rolesEntries(signal)
+    const entry = ROLE_ID_PATTERN.test(request.role)
+      ? entries.find(candidate => candidate.name === `${request.role}.md`)
+      : undefined
+    if (entry === undefined) {
+      fail('PROMPT_OPTIMIZER_ROLE_NOT_FOUND', `prompt-optimizer: unknown role "${request.role}"; pick one of the listed roles`)
+    }
+    const currentText = await this.readRoleText(fs, entry, signal)
+    const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+    const messages: Message[] = [createUserMessage({
+      content: [{ type: 'text', text: roleEvolutionUserInput(currentText, request.draft, request.optimized) }],
+      source: { kind: 'dsh-prompt-optimizer' },
+    })]
+    let definition: string
+    try {
+      using callDeadline = deadline(signal, this.config.timeoutMs, 'PROMPT_OPTIMIZER_TIMEOUT')
+      let call: Awaited<ReturnType<typeof this.ctx.llm.prepareCall>>
+      try {
+        call = await this.ctx.llm.prepareCall({ ...route, maxTokens: this.config.maxOutputTokens }, callDeadline.signal)
+      } catch (error) {
+        callDeadline.signal.throwIfAborted()
+        if (error instanceof LlmError && error.code === 'NO_ADAPTER') {
+          fail('PROMPT_OPTIMIZER_NO_ADAPTER', `prompt-optimizer: provider "${route.provider}" has no active model adapter in this app; pick an available model in the composer or configure provider and model together`)
+        }
+        throw error
+      }
+      const llmOptions: GenerateOptions = {
+        ...call.config,
+        messages,
+        system: roleEvolutionSystemPrompt(),
+        sessionId: request.sessionId,
+        signal: callDeadline.signal,
+      }
+      callDeadline.signal.throwIfAborted()
+      const assembler = new BlockAssembler()
+      for await (const chunk of call.stream(llmOptions)) {
+        callDeadline.signal.throwIfAborted()
+        assembler.push(chunk)
+      }
+      callDeadline.signal.throwIfAborted()
+      terminalFinish(assembler.finish)
+      definition = responseText(assembler.blocks()).trim()
+      if (definition === '' || !definition.startsWith('# ') || definition.length > ROLE_MAX_CHARS) {
+        fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_INVALID', 'prompt-optimizer: the rewritten role definition must be non-empty, start with an H1 heading, and stay within the character cap')
+      }
+      const backupTarget = await fs.resolve(join(rolesDir, `${request.role}.md.bak`), { signal })
+      await fs.writeText(backupTarget, currentText, undefined, signal)
+      await fs.writeText(entry.target, definition, undefined, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      if (isTypedFailure(error)) throw error
+      fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_FAILED', `prompt-optimizer: evolving role "${request.role}" failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    const bytes = Buffer.byteLength(definition, 'utf8')
+    session.append('prompt-optimizer/role-evolved', { role: request.role, bytes })
+    return { role: request.role, name: roleNameOf(definition) ?? request.role, bytes }
+  }
+
+  /**
    * Join the pending inbox messages of one live session's agent (read through
    * the `inbox` projection) into one text block for ranking contexts.
    * @param session - live session whose pending messages join the context.
@@ -793,12 +884,13 @@ export default class PromptOptimizer extends Service {
   /**
    * Resolve the configured roles directory and its definition-file entries.
    * @param signal - caller cancellation.
-   * @returns the filesystem service plus every slug-named `<slug>.md` entry
-   * it listed; other files are directory metadata and never candidates.
+   * @returns the filesystem service, the validated directory path, and every
+   * slug-named `<slug>.md` entry it listed; other files are directory
+   * metadata and never candidates.
    * @throws when `rolesDir` is unset, no filesystem service is composed, the
    * directory cannot be resolved or listed, or it holds too many files.
    */
-  private async rolesEntries(signal: AbortSignal): Promise<{ fs: FileSystem; entries: readonly FsDirEntry[] }> {
+  private async rolesEntries(signal: AbortSignal): Promise<{ fs: FileSystem; rolesDir: string; entries: readonly FsDirEntry[] }> {
     if (this.config.rolesDir === undefined) {
       fail('PROMPT_OPTIMIZER_NO_ROLES_DIR', 'prompt-optimizer: rolesDir is not configured; point it at a directory of role definition files to use role-styled optimization')
     }
@@ -809,11 +901,12 @@ export default class PromptOptimizer extends Service {
     try {
       const dir = await fs.resolve(this.config.rolesDir, { signal })
       const listed = await fs.listDir(dir, signal)
-      if (listed.length > ROLES_MAX_ENTRIES) {
-        fail('PROMPT_OPTIMIZER_ROLES_TOO_MANY', `prompt-optimizer: rolesDir holds ${String(listed.length)} entries, above the ${String(ROLES_MAX_ENTRIES)} cap`)
-      }
       const entries = listed.filter(entry => entry.type === 'file' && ROLE_FILE_PATTERN.test(entry.name))
-      return { fs, entries }
+      // The cap governs role definition files; side files (README, .bak) must not trip it.
+      if (entries.length > ROLES_MAX_ENTRIES) {
+        fail('PROMPT_OPTIMIZER_ROLES_TOO_MANY', `prompt-optimizer: rolesDir holds ${String(entries.length)} role files, above the ${String(ROLES_MAX_ENTRIES)} cap`)
+      }
+      return { fs, rolesDir: this.config.rolesDir, entries }
     } catch (error) {
       signal.throwIfAborted()
       if (isTypedFailure(error)) throw error

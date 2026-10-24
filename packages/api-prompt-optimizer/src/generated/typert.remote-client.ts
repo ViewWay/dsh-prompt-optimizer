@@ -9,6 +9,8 @@ import type {
   PromptLibrarySaveRequest,
   PromptOptimizeRequest,
   PromptOptimizeResult,
+  PromptRoleEvolveRequest,
+  PromptRoleEvolveResult,
   PromptRoleRecommendation,
   PromptRoleRecommendRequest,
   PromptRoleSummary,
@@ -18,6 +20,7 @@ import type {
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace$70726f6d70744f7074696d697a6572 {
+    evolveRole: (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
     listPrompts: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     listRoles: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
     optimize: (request: PromptOptimizeRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptOptimizeResult>>
@@ -26,6 +29,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     verify: (request: PromptVerifyRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptVerifyResult>>
   }
   interface TypertRemoteMap {
+    'promptOptimizer/evolveRole': (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
     'promptOptimizer/listPrompts': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     'promptOptimizer/listRoles': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
     'promptOptimizer/optimize': (request: PromptOptimizeRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptOptimizeResult>>
@@ -51,6 +55,19 @@ const _v1 = () => (_v1$value ??= z.array(z.object({
   'id': z.string().readonly().describe('Role slug matching a `<slug>.md` definition file in the configured roles directory.'),
   'name': z.string().readonly().describe('Human-facing role name parsed from the definition\'s first heading; the slug when no heading exists.'),
 })))
+let _evolveRole_parameter_0$value
+const _evolveRole_parameter_0 = () => (_evolveRole_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session that produced the round; owns the evolution log and route fallback.'),
+  'role': z.string().readonly().describe('Role slug whose `<slug>.md` definition styled the round and is rewritten.'),
+  'draft': z.string().readonly().describe('Complete draft text the round optimized.'),
+  'optimized': z.string().readonly().describe('Complete optimized text the round produced.'),
+}))
+let _evolveRole_result$value
+const _evolveRole_result = () => (_evolveRole_result$value ??= z.object({
+  'role': z.string().readonly().describe('Role slug whose definition was rewritten.'),
+  'name': z.string().readonly().describe('Human-facing role name parsed from the new definition\'s first heading.'),
+  'bytes': z.number().readonly().describe('UTF-8 byte size of the written definition.'),
+}))
 let _optimize_parameter_0$value
 const _optimize_parameter_0 = () => (_optimize_parameter_0$value ??= z.object({
   'sessionId': z.string().readonly().describe('Session whose draft is being optimized; owns the request log and route fallback.'),
@@ -122,6 +139,13 @@ const _verify_result = () => (_verify_result$value ??= z.object({
   'output': z.string().readonly().describe('Combined stdout and stderr, truncated to the service\'s output cap.'),
   'durationMs': z.number().readonly().describe('Wall time from dispatch to completion.'),
 }))
+let _evolveRole_parameter_0_strict$value
+const _evolveRole_parameter_0_strict = () => (_evolveRole_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+  'role': z.string().readonly(),
+  'draft': z.string().readonly(),
+  'optimized': z.string().readonly(),
+}))
 let _optimize_parameter_0_strict$value
 const _optimize_parameter_0_strict = () => (_optimize_parameter_0_strict$value ??= z.strictObject({
   'sessionId': z.string().readonly(),
@@ -152,6 +176,39 @@ const _verify_parameter_0_strict = () => (_verify_parameter_0_strict$value ??= z
 export const TYPERT_REMOTE = createTypertRemoteInfo({
   package: '@yimiliya/dsh-api-prompt-optimizer',
   methods: {
+    'promptOptimizer/evolveRole': {
+      service: 'promptOptimizerController',
+      description: 'Rewrite one role definition from the round\'s draft and optimized result.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'producing session, role slug, and the round\'s two texts.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptRoleEvolveRequest',
+            create: _evolveRole_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, role: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' } }, required: ['sessionId', 'role', 'draft', 'optimized'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptRoleEvolveRequest',
+            create: _evolveRole_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, role: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' } }, required: ['sessionId', 'role', 'draft', 'optimized'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptRoleEvolveResult',
+        create: _evolveRole_result,
+        description: 'the rewritten role\'s slug, parsed name, and written byte size.',
+        jsonSchema: { type: 'object', properties: { role: { type: 'string' }, name: { type: 'string' }, bytes: { type: 'number' } }, required: ['role', 'name', 'bytes'], additionalProperties: true },
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 149, column: 9 },
+    },
     'promptOptimizer/listPrompts': {
       service: 'promptOptimizerController',
       description: 'List the prompt library\'s most recent entries, newest first.',
@@ -165,7 +222,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'at most the service\'s entry cap of persisted prompts.',
         jsonSchema: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' }, createdAt: { type: 'string' }, sourceSessionId: { type: 'string' } }, required: ['id', 'title', 'text', 'createdAt', 'sourceSessionId'], additionalProperties: true } },
       },
-      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 94, column: 9 },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 96, column: 9 },
     },
     'promptOptimizer/listRoles': {
       service: 'promptOptimizerController',
@@ -180,7 +237,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'every role summary the directory holds, sorted by slug.',
         jsonSchema: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } }, required: ['id', 'name'], additionalProperties: true } },
       },
-      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 111, column: 9 },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 113, column: 9 },
     },
     'promptOptimizer/optimize': {
       service: 'promptOptimizerController',
@@ -213,7 +270,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the parsed optimization result for preview.',
         jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
       },
-      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 41, column: 9 },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 43, column: 9 },
     },
     'promptOptimizer/recommendRoles': {
       service: 'promptOptimizerController',
@@ -246,7 +303,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'at most three ranked role recommendations.',
         jsonSchema: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, score: { type: 'number' }, matched: { type: 'array', items: { type: 'string' } } }, required: ['id', 'name', 'score', 'matched'], additionalProperties: true } },
       },
-      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 129, column: 9 },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 131, column: 9 },
     },
     'promptOptimizer/savePrompt': {
       service: 'promptOptimizerController',
@@ -279,7 +336,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the persisted library entry.',
         jsonSchema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, text: { type: 'string' }, createdAt: { type: 'string' }, sourceSessionId: { type: 'string' } }, required: ['id', 'title', 'text', 'createdAt', 'sourceSessionId'], additionalProperties: true },
       },
-      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 77, column: 9 },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 79, column: 9 },
     },
     'promptOptimizer/verify': {
       service: 'promptOptimizerController',
@@ -312,7 +369,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         description: 'the command\'s exit status and truncated output.',
         jsonSchema: { type: 'object', properties: { passed: { type: 'boolean' }, exitCode: { oneOf: [{ type: 'null', const: null }, { type: 'number' }] }, timedOut: { type: 'boolean' }, output: { type: 'string' }, durationMs: { type: 'number' } }, required: ['passed', 'exitCode', 'timedOut', 'output', 'durationMs'], additionalProperties: true },
       },
-      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 59, column: 9 },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 61, column: 9 },
     },
   },
 }, z)

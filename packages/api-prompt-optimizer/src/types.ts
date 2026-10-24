@@ -17,6 +17,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'prompt-optimizer/library-failed': { readonly reason: string }
     /** Listing the roles directory failed; `reason` names the typed service failure. */
     'prompt-optimizer/roles-failed': { readonly reason: string }
+    /** One role-definition evolution failed; `reason` names the typed service failure. */
+    'prompt-optimizer/role-evolve-failed': { readonly reason: string }
   }
 }
 
@@ -26,6 +28,8 @@ export type {
   PromptOptimizeRequest,
   PromptOptimizeResult,
   PromptOptimizeTarget,
+  PromptRoleEvolveRequest,
+  PromptRoleEvolveResult,
   PromptRoleRecommendation,
   PromptRoleRecommendRequest,
   PromptRoleSummary,

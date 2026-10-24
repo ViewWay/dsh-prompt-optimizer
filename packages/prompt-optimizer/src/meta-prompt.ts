@@ -344,6 +344,52 @@ export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): stri
 }
 
 /**
+ * The role-evolution system prompt: rewrite one role definition file from the
+ * materials of a completed round (current definition, draft, optimized
+ * result), keeping the definition-file contract intact.
+ * @returns exact system prompt text for one role-evolution round.
+ */
+export function roleEvolutionSystemPrompt(): string {
+  return [
+    'You are a role definition maintainer. The user gives you the current definition of one professional role plus the draft and the optimized prompt of a round that role styled. Rewrite the role definition file based on the given materials.',
+    '',
+    'Rules:',
+    '1. Output only the definition file itself: no preamble, no closing remarks, no code fences, nothing before or after the definition.',
+    '2. Keep the first line an H1 heading in the exact format `# 中文名（English）`, preserving the role\'s current Chinese and English names unless the materials clearly refine them.',
+    '3. Keep the seven-section structure with these exact headings in this order: `## 角色设定`, `## 背景`, `## 技能`, `## 工作方式`, `## 输出格式`, `## 回答风格`, `## 回答限制`.',
+    '4. Absorb the domain vocabulary and task shapes the materials demonstrate into the definition; never invent experiences, credentials, or facts the current definition and the materials do not support.',
+    '5. Write the definition in Chinese (the English name in the H1 and unavoidable technical terms excepted).',
+    '6. Keep the whole definition between 250 and 900 Chinese characters.',
+    '7. Never mention any tool name or command name in the definition.',
+  ].join('\n')
+}
+
+/**
+ * Frame the three evolution materials (current definition, draft, optimized
+ * result) as the round's user input.
+ * @param definition - complete current role definition text.
+ * @param draft - complete draft text the round optimized.
+ * @param optimized - complete optimized text the round produced.
+ * @returns exact user input for the role-evolution round.
+ */
+export function roleEvolutionUserInput(definition: string, draft: string, optimized: string): string {
+  return [
+    'Rewrite this role definition from the materials below.',
+    '',
+    '--- current role definition ---',
+    definition,
+    '',
+    '--- draft the round optimized ---',
+    draft,
+    '',
+    '--- optimized result ---',
+    optimized,
+    '',
+    'Output the complete rewritten role definition file only.',
+  ].join('\n')
+}
+
+/**
  * Frame one draft (and optional rejected earlier results) as the round's user input.
  * @param text - complete draft text to optimize.
  * @param previousAttempts - rejected optimized texts, oldest first.

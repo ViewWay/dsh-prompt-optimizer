@@ -234,6 +234,7 @@ function panelProps(state: OptimizationState | undefined, actions: Partial<Previ
     loadRoles: vi.fn(async () => []),
     verifyCheck: vi.fn(async () => ({ passed: true, exitCode: 0, timedOut: false, output: '', durationMs: 0 })),
     saveToLibrary: vi.fn(async () => {}),
+    evolveRole: vi.fn(async () => ({ role: 'imp-code-reviewer', name: '代码评审员', bytes: 96 })),
     useOptimization: <T,>(selector: (snapshot: OptimizationSnapshot) => T): T => selector(store.getSnapshot()),
     t,
     ...actions,
@@ -359,6 +360,28 @@ describe('PreviewPanel', () => {
   it('falls back to the role badge for a role-styled round when no roles are listed', () => {
     render(<PreviewPanel {...panelProps({ ...READY, role: 'imp-code-reviewer' })} />)
     expect(screen.getByTestId('optimization-role').textContent).toBe('角色风格：imp-code-reviewer')
+  })
+
+  it('omits the role-evolution button when the round used no role', () => {
+    render(<PreviewPanel {...panelProps(READY)} />)
+    expect(screen.queryByRole('button', { name: zh.evolveRole })).toBeNull()
+  })
+
+  it('evolves the used role on demand, reports the new name, and reloads roles', async () => {
+    const evolveRole = vi.fn(async () => ({ role: 'imp-code-reviewer', name: '资深代码评审员', bytes: 420 }))
+    const loadRoles = vi.fn(async () => [{ id: 'imp-code-reviewer', name: '代码评审员' }])
+    render(<PreviewPanel {...panelProps({ ...READY, role: 'imp-code-reviewer' }, { evolveRole, loadRoles })} />)
+    fireEvent.click(screen.getByRole('button', { name: zh.evolveRole }))
+    await waitFor(() => { expect(screen.getByTestId('evolve-role-done').textContent).toBe('已更新角色：资深代码评审员') })
+    expect(evolveRole).toHaveBeenCalledExactlyOnceWith(SESSION, 'imp-code-reviewer', '原始草稿', '优化后的提示词')
+    await waitFor(() => { expect(loadRoles).toHaveBeenCalledTimes(2) })
+  })
+
+  it('reports a role-evolution failure as a status line', async () => {
+    const evolveRole = vi.fn(async () => { throw new Error('no adapter') })
+    render(<PreviewPanel {...panelProps({ ...READY, role: 'imp-code-reviewer' }, { evolveRole })} />)
+    fireEvent.click(screen.getByRole('button', { name: zh.evolveRole }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe(zh.evolveRoleFailed) })
   })
 
   it('offers the header role picker and re-runs the round on change', async () => {

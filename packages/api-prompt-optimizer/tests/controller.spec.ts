@@ -114,3 +114,23 @@ it('forwards a roles listing and wraps its failure typed', async () => {
   await expect(failingApi.listRoles(new AbortController().signal))
     .rejects.toMatchObject({ details: { reason: 'rolesDir unset' } })
 })
+
+it('forwards a role evolution and wraps its failure typed', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const EVOLVED = { role: 'imp-code-reviewer', name: '代码评审员', bytes: 128 }
+  const evolveRole = vi.fn(async () => EVOLVED)
+  ctx.provide('promptOptimizer', { evolveRole } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = { sessionId: 'session-1' as never, role: 'imp-code-reviewer', draft: '草稿', optimized: '优化后' }
+
+  await expect(api.evolveRole(request, new AbortController().signal)).resolves.toEqual(EVOLVED)
+  expect(evolveRole).toHaveBeenCalledExactlyOnceWith(request, expect.any(AbortSignal))
+
+  const failing = new Context()
+  roots.push(failing)
+  failing.provide('promptOptimizer', { evolveRole: vi.fn(async () => { throw new Error('no adapter') }) } as never)
+  const failingApi = new PromptOptimizerController(failing)
+  await expect(failingApi.evolveRole(request, new AbortController().signal))
+    .rejects.toMatchObject({ details: { reason: 'no adapter' } })
+})
