@@ -129,3 +129,22 @@
 1. **立即**：SEC-01（zod 升级验证）与 SEC-02（verify 命令白名单/确认层）——两者共同覆盖当前最高风险面。
 2. **近期**：SEC-03（undici override + audit 门禁）、SEC-04（evolveRole 写前审阅）。
 3. **随版本迭代**：SEC-05 ~ SEC-08。
+
+## 修复状态（2026-10-24 当日全部落地，最终门禁 EXIT 0：lint + typecheck + build + 185/185 测试；`pnpm audit` 全范围 0 条）
+
+| ID | 状态 | 落地 commit | 验证 |
+| --- | --- | --- | --- |
+| SEC-01 | ✅ 已修复 | `51fafa5` + `4e756f9` | zod 全 workspace 单实例 4.6.7（含 harness 链 override）；非增量 tsc 默认堆通过（TS2322/TS2589 消失）；audit zod 条目清零。注：51fafa5 单独提交时存在双实例类型冲突，被增量构建缓存掩盖，4e756f9 以 workspace override 补全 |
+| SEC-02 | ✅ 已修复 | `d4449cd`（host）+ `b00fba7`（UI） | verify-policy 12 用例 + service/controller 阻断用例；UI 阻断告警 + 命令等宽预览组件用例 |
+| SEC-03 | ✅ 已修复 | `4e756f9` + `3ad7630` | undici 全链 8.12.3；ci.yml 增 `pnpm audit --prod --audit-level high` 门禁（本地 exit 0） |
+| SEC-04 | ✅ 已修复 | `ef5de55`（API/host）+ `b00fba7`（UI） | 两阶段语义 5 用例（预览不落盘 / 提交落盘+.bak / 无预览提交失败）；UI 审阅交互 3 用例。generated 描述符手编，**再生成待办**（生成器需 face-aggregate 布局） |
+| SEC-05 | ✅ 已修复 | `759d5d0` | 双语 README 隐私章节 |
+| SEC-06 | ✅ 已修复 | `b659eb6` | 边界用例证明 UTF-8 字节语义（65536 过 / 65537 与 65538 字节多字节串拒；5 次过 / 6 次拒） |
+| SEC-07 | ✅ 已修复 | `3ad7630` | 六处 action 引用 pin 至 v4.4.0 commit SHA（pnpm/action-setup 标签 GPG 验证） |
+| SEC-08 | ✅ 已修复 | `51b07a7` | Bearer/AKIA/ghp_/sk-/xox?-/JWT 六类模式脱敏用例（结果与日志记录双覆盖） |
+
+遗留事项（不阻塞）：
+1. **Typert 描述符再生成**：`packages/api-prompt-optimizer/src/generated/` 为手编（镜像生成器风格），待具备 harness 生成器运行环境后再生成为权威版本。
+2. **上游反馈**：harness 0.2.1-rc.2 的 `dsh-llm` 精确 pin zod 4.4.3（含 GHSA-mrhx-c7xc-m3w5），本仓库经 workspace override 消除，建议向 harness 仓反馈推进 baseline。
+3. **index.ts 行数**：`packages/prompt-optimizer/src/index.ts` 现 1081 行，超出仓库 1000 行指引；建议后续把脱敏/截断逻辑（约 55 行）迁入 `verify-policy.ts`。
+4. UI 侧 SEC-02/SEC-04 共用一个 commit（`b00fba7`，message 内分述）——mount.ts 单 hunk 交缠使拆分风险大于收益。
