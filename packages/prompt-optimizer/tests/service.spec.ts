@@ -607,6 +607,7 @@ describe('PromptOptimizer prompt library', () => {
         table: () => ({
           get: (key: string) => table.get(key),
           put: async (key: string, value: LibraryRow) => { table.set(key, value) },
+          delete: async (key: string) => table.delete(key),
           entries: () => table.entries(),
         }),
       }),
@@ -667,6 +668,47 @@ describe('PromptOptimizer prompt library', () => {
       { sessionId, title: '多字节超限', text: '草'.repeat(64 * 1024 / 3 + 1) }, new AbortController().signal,
     )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_TEXT_TOO_LARGE' })
     expect(table.size).toBe(1)
+  })
+
+  it('deletes a stored entry and fails typed for an unknown or empty id', async () => {
+    const { ctx, sessionId } = await withLibrary()
+    const saved = await ctx.promptOptimizer.savePrompt(
+      { sessionId, title: '临时提示词', text: '目标：一次性使用' }, new AbortController().signal,
+    )
+
+    await expect(ctx.promptOptimizer.deletePrompt({ sessionId, id: saved.id }, new AbortController().signal))
+      .resolves.toBeUndefined()
+    await expect(ctx.promptOptimizer.listPrompts(new AbortController().signal)).resolves.toEqual([])
+
+    await expect(ctx.promptOptimizer.deletePrompt({ sessionId, id: saved.id }, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_LIBRARY_ENTRY_NOT_FOUND' })
+    await expect(ctx.promptOptimizer.deletePrompt({ sessionId, id: '   ' }, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_EMPTY_LIBRARY_ID' })
+  })
+})
+
+describe('PromptOptimizer.optimize directions', () => {
+  it('conditions the round on a requested direction, echoes it, and logs it', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(envelope('精简后的提示词', ['按方向精简']))
+    const session = ctx.sessions.get(sessionId)!
+
+    const result = await ctx.promptOptimizer.optimize(
+      { sessionId, text: '帮我写个脚本', direction: 'concise' }, new AbortController().signal,
+    )
+
+    expect(result.direction).toBe('concise')
+    expect(adapter.requests[0]!.system).toContain('Rewrite direction the user requested (apply on top of the rules above):')
+    expect(adapter.requests[0]!.system).toContain('- concise —')
+    expect(llmRequests(session.snapshotEvents()).at(-1)?.direction).toBe('concise')
+  })
+
+  it('rejects an unknown direction before any dispatch', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(envelope('x', []))
+
+    await expect(ctx.promptOptimizer.optimize(
+      { sessionId, text: '草稿', direction: 'louder' as never }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_BAD_DIRECTION' })
+    expect(adapter.requests).toHaveLength(0)
   })
 })
 

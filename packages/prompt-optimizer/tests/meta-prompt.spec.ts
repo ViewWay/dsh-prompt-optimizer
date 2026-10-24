@@ -298,3 +298,22 @@ describe('language conditioning', () => {
     expect(critiqueSystemPrompt()).toContain("1. Keep the rewrite's language.")
   })
 })
+
+describe('direction conditioning', () => {
+  it('renders the requested direction guidance in every round prompt', () => {
+    for (const direction of ['concise', 'detailed', 'technical', 'structured', 'acceptance'] as const) {
+      const prompt = optimizerSystemPrompt({ direction })
+      expect(prompt).toContain('Rewrite direction the user requested (apply on top of the rules above):')
+      expect(prompt).toContain(`- ${direction} —`)
+      expect(prompt.indexOf('Rewrite direction')).toBeLessThan(prompt.indexOf('Respond with exactly'))
+      expect(optimizerSystemPromptForSystem({ direction })).toContain(`- ${direction} —`)
+      expect(critiqueSystemPrompt({ direction })).toContain(`- ${direction} —`)
+    }
+  })
+
+  it('omits the direction block entirely without a direction', () => {
+    expect(optimizerSystemPrompt()).not.toContain('Rewrite direction')
+    expect(optimizerSystemPromptForSystem()).not.toContain('Rewrite direction')
+    expect(critiqueSystemPrompt()).not.toContain('Rewrite direction')
+  })
+})

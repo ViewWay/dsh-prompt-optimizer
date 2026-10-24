@@ -11,6 +11,13 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 /** Optimization target: a chat draft (one round) or a standing system prompt (rewrite plus critique round). */
 export type PromptOptimizeTarget = 'draft' | 'system'
 
+/**
+ * Direction the next rewrite should push toward. Fixed set — no free text —
+ * so a request can never smuggle arbitrary instructions into the system
+ * prompt.
+ */
+export type PromptOptimizeDirection = 'concise' | 'detailed' | 'technical' | 'structured' | 'acceptance'
+
 /** One selectable professional role from the configured roles directory. */
 export interface PromptRoleSummary {
   /** Role slug matching a `<slug>.md` definition file in the configured roles directory. */
@@ -82,6 +89,8 @@ export interface PromptOptimizeRequest {
    * example `中文`); absent keeps the draft's language.
    */
   readonly language?: string
+  /** Direction the next rewrite should push toward; absent applies the plain rules. */
+  readonly direction?: PromptOptimizeDirection
 }
 
 /** One draft acceptance criterion the rewritten prompt should be judged against. */
@@ -110,6 +119,8 @@ export interface PromptOptimizeResult {
   readonly model: string
   /** Role slug that styled the round; absent when no role was requested. */
   readonly role?: string
+  /** Direction the round applied; absent when the plain rules governed it. */
+  readonly direction?: PromptOptimizeDirection
   /** Names of the installed-skill hints that conditioned the round; absent when none matched. */
   readonly skills?: readonly string[]
   /** Usage from the stream's `usage` chunk; absent until one arrives. */
@@ -148,6 +159,14 @@ export interface PromptLibrarySaveRequest {
   readonly title: string
   /** Complete optimized text to store; non-empty. */
   readonly text: string
+}
+
+/** Wire request to delete one stored entry from the prompt library. */
+export interface PromptLibraryDeleteRequest {
+  /** Session requesting the deletion. */
+  readonly sessionId: SessionId
+  /** Library id of the entry to remove. */
+  readonly id: string
 }
 
 /** One persisted library entry. */

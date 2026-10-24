@@ -113,6 +113,25 @@ it('forwards a library save and wraps its failure typed', async () => {
     .rejects.toMatchObject({ details: { reason: 'no storage domain' } })
 })
 
+it('forwards a library deletion and wraps its failure typed', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const deletePrompt = vi.fn(async () => {})
+  ctx.provide('promptOptimizer', { deletePrompt } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = { sessionId: 'session-1' as never, id: 'entry-1' }
+
+  await expect(api.deletePrompt(request, new AbortController().signal)).resolves.toBeUndefined()
+  expect(deletePrompt).toHaveBeenCalledExactlyOnceWith(request, expect.any(AbortSignal))
+
+  const failing = new Context()
+  roots.push(failing)
+  failing.provide('promptOptimizer', { deletePrompt: vi.fn(async () => { throw new Error('no such entry') }) } as never)
+  const failingApi = new PromptOptimizerController(failing)
+  await expect(failingApi.deletePrompt(request, new AbortController().signal))
+    .rejects.toMatchObject({ code: 'prompt-optimizer/library-failed', details: { reason: 'no such entry' } })
+})
+
 it('forwards a roles listing and wraps its failure typed', async () => {
   const ctx = new Context()
   roots.push(ctx)

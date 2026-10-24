@@ -8,6 +8,7 @@
  * @module @yimiliya/dsh-prompt-optimizer
  */
 
+import type { PromptOptimizeDirection } from './types.ts'
 import type { SkillHint, SkillParameter } from './skills.ts'
 
 /** Starts the rewritten-prompt section of the model response. */
@@ -23,6 +24,19 @@ const MAX_CHANGES = 6
 const MAX_ACCEPTANCE = 4
 /** Upper bound on domains whose guidance joins one system prompt. */
 const MAX_PRIOR_DOMAINS = 2
+
+/**
+ * Fixed English guidance each rewrite direction carries. Enum-keyed so a
+ * request can only pick a curated steer, never inject free instructions into
+ * the system prompt.
+ */
+const DIRECTION_GUIDANCE: Readonly<Record<PromptOptimizeDirection, string>> = {
+  concise: 'concise — cut boilerplate and merge overlapping constraints; keep every hard fact and acceptance criterion, and make the rewrite as short as it can be while staying executable.',
+  detailed: 'detailed — expand thin spots with the concrete sub-steps, inputs, and edge cases the draft implies; add nothing the draft cannot support.',
+  technical: 'technical — use precise domain terminology and name the exact commands, versions, and formats the draft implies, so an engineer can execute without follow-up questions.',
+  structured: 'structured — reorganize the rewrite into clearly labeled sections (goal, context, constraints, steps, expected output); keep the content otherwise equivalent.',
+  acceptance: 'acceptance — make the ending acceptance criteria concrete and verifiable, each with a runnable check command in backticks where one plausibly exists; never invent success thresholds.',
+}
 
 /** One domain prior: bilingual match keywords plus the guidance to surface. */
 interface DomainPrior {
@@ -160,6 +174,8 @@ export interface RoundConditioning {
    * `中文`); absent keeps the draft's language.
    */
   readonly language?: string
+  /** Direction the rewrite should push toward; absent applies the plain rules. */
+  readonly direction?: PromptOptimizeDirection
 }
 
 /** Role block appended to a system prompt when a role conditions the round. */
@@ -229,6 +245,15 @@ function skillBlock(skills: readonly SkillHint[]): readonly string[] {
   ]
 }
 
+/** Direction block appended to a system prompt when the user steered the round. */
+function directionBlock(direction: PromptOptimizeDirection): readonly string[] {
+  return [
+    '',
+    'Rewrite direction the user requested (apply on top of the rules above):',
+    `- ${DIRECTION_GUIDANCE[direction]}`,
+  ]
+}
+
 /**
  * Rule 1 for one round: pin the output language when the request named one,
  * else keep the draft's language.
@@ -259,7 +284,7 @@ function writtenIn(language: string | undefined): string {
  * @returns exact system prompt text for every optimization round.
  */
 export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction } = conditioning
   return [
     'You are a prompt optimization specialist. The user gives you a draft prompt they intend to send to a coding agent. Rewrite the draft into a clear, well-structured prompt.',
     '',
@@ -277,6 +302,7 @@ export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): str
     ...priorBlock(domainPriors),
     ...(role === undefined ? [] : roleBlock(role, DRAFT_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
+    ...(direction === undefined ? [] : directionBlock(direction)),
     ...ENVELOPE_LINES,
   ].join('\n')
 }
@@ -290,7 +316,7 @@ export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): str
  * @returns exact system prompt text for a system-target rewrite round.
  */
 export function optimizerSystemPromptForSystem(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction } = conditioning
   return [
     'You are a prompt optimization specialist. The user gives you a draft SYSTEM prompt: the standing instruction block that governs a coding agent across a whole session, not a single chat message. Rewrite the draft into a clear, well-structured system prompt.',
     '',
@@ -308,6 +334,7 @@ export function optimizerSystemPromptForSystem(conditioning: RoundConditioning =
     ...priorBlock(domainPriors),
     ...(role === undefined ? [] : roleBlock(role, SYSTEM_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
+    ...(direction === undefined ? [] : directionBlock(direction)),
     ...ENVELOPE_LINES,
   ].join('\n')
 }
@@ -319,7 +346,7 @@ export function optimizerSystemPromptForSystem(conditioning: RoundConditioning =
  * @returns exact system prompt text for the critique round.
  */
 export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction } = conditioning
   return [
     'You are a prompt optimization specialist performing a critique round on a rewritten SYSTEM prompt. You receive the original draft and the first rewrite. Audit the rewrite, then output an improved full revision.',
     '',
@@ -340,6 +367,7 @@ export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): stri
     ...priorBlock(domainPriors),
     ...(role === undefined ? [] : roleBlock(role, SYSTEM_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
+    ...(direction === undefined ? [] : directionBlock(direction)),
     ...ENVELOPE_LINES,
   ].join('\n')
 }

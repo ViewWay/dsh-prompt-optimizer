@@ -34,8 +34,10 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type {
+  PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
+  PromptOptimizeDirection,
   PromptOptimizeRequest,
   PromptOptimizeResult,
   PromptOptimizeTarget,
@@ -111,6 +113,8 @@ export interface PromptOptimizerLlmRequestEventData {
   readonly skillsHinted?: number
   /** Self-describing output language the round's rules pinned; absent when the draft's language is kept. */
   readonly language?: string
+  /** Rewrite direction the round applied; absent when the plain rules governed it. */
+  readonly direction?: PromptOptimizeDirection
 }
 
 /** One executed acceptance-criterion check command, recorded after completion. */
@@ -175,6 +179,8 @@ const LIBRARY_TEXT_MAX_BYTES = 64 * 1024
 const LIBRARY_MAX_ENTRIES = 100
 /** Most rejected earlier results one optimize request may replay. */
 const MAX_PREVIOUS_ATTEMPTS = 5
+/** Every rewrite direction a request may steer a round toward. */
+const DIRECTIONS: readonly PromptOptimizeDirection[] = ['concise', 'detailed', 'technical', 'structured', 'acceptance']
 /** Slug shape a role id must have before the directory listing is consulted. */
 const ROLE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
 /** Filenames that count as role definitions: `<slug>.md` exactly. */
@@ -468,6 +474,7 @@ export default class PromptOptimizer extends Service {
     readonly role: PromptRoleRef | undefined
     readonly skillsHinted: number
     readonly language: string | undefined
+    readonly direction: PromptOptimizeDirection | undefined
   }, signal: AbortSignal): Promise<{ parsed: ReturnType<typeof parseOptimizerResponse>; usage: TokenUsage | undefined }> {
     const messages: Message[] = [createUserMessage({
       content: [{ type: 'text', text: options.input }],
@@ -504,6 +511,7 @@ export default class PromptOptimizer extends Service {
       ...(options.role !== undefined ? { role: options.role.id } : {}),
       skillsHinted: options.skillsHinted,
       ...(options.language !== undefined ? { language: options.language } : {}),
+      ...(options.direction !== undefined ? { direction: options.direction } : {}),
     })
     callDeadline.signal.throwIfAborted()
     const assembler = new BlockAssembler()
@@ -544,6 +552,10 @@ export default class PromptOptimizer extends Service {
       fail('PROMPT_OPTIMIZER_BAD_TARGET', `prompt-optimizer: unknown optimization target "${rawTarget}"`)
     }
     const target: PromptOptimizeTarget = rawTarget
+    const direction = request.direction
+    if (direction !== undefined && !DIRECTIONS.includes(direction)) {
+      fail('PROMPT_OPTIMIZER_BAD_DIRECTION', `prompt-optimizer: unknown direction "${direction}"; expected one of ${DIRECTIONS.join(', ')}`)
+    }
     const previousAttempts = [...request.previousAttempts ?? []]
     if (previousAttempts.length > MAX_PREVIOUS_ATTEMPTS) {
       fail('PROMPT_OPTIMIZER_ATTEMPTS_TOO_MANY', `prompt-optimizer: at most ${String(MAX_PREVIOUS_ATTEMPTS)} rejected results may be replayed`)
@@ -565,6 +577,7 @@ export default class PromptOptimizer extends Service {
       skills,
       ...(role !== undefined ? { role } : {}),
       ...(language !== undefined ? { language } : {}),
+      ...(direction !== undefined ? { direction } : {}),
     }
     const first = await this.dispatchRound(session, {
       route,
@@ -578,6 +591,7 @@ export default class PromptOptimizer extends Service {
       role,
       skillsHinted: skills.length,
       language,
+      direction,
     }, signal)
     if (first.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the model returned an empty rewrite')
@@ -590,6 +604,7 @@ export default class PromptOptimizer extends Service {
         provider: route.provider,
         model: route.model,
         ...(role !== undefined ? { role: role.id } : {}),
+        ...(direction !== undefined ? { direction } : {}),
         ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
         ...(first.usage !== undefined ? { usage: first.usage } : {}),
       }
@@ -606,6 +621,7 @@ export default class PromptOptimizer extends Service {
       role,
       skillsHinted: skills.length,
       language,
+      direction,
     }, signal)
     if (critique.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the critique round returned an empty rewrite')
@@ -619,6 +635,7 @@ export default class PromptOptimizer extends Service {
       provider: route.provider,
       model: route.model,
       ...(role !== undefined ? { role: role.id } : {}),
+      ...(direction !== undefined ? { direction } : {}),
       ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
       ...(usage !== undefined ? { usage } : {}),
     }
@@ -739,6 +756,26 @@ export default class PromptOptimizer extends Service {
       .map(([, row]) => ({ ...row, sourceSessionId: row.sourceSessionId as SessionId }))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .slice(0, LIBRARY_MAX_ENTRIES)
+  }
+
+  /**
+   * Delete one stored entry from the durable prompt library.
+   * @param request - requesting session and the entry's library id.
+   * @param signal - caller cancellation.
+   * @throws when the id is empty, no storage domain is composed, or no entry
+   * carries the id.
+   */
+  async deletePrompt(request: PromptLibraryDeleteRequest, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    if (request.id.trim() === '') {
+      fail('PROMPT_OPTIMIZER_EMPTY_LIBRARY_ID', 'prompt-optimizer: a library deletion needs a non-empty entry id')
+    }
+    const domain = await this.openLibrary()
+    const removed = await domain.table('prompts').delete(request.id)
+    signal.throwIfAborted()
+    if (!removed) {
+      fail('PROMPT_OPTIMIZER_LIBRARY_ENTRY_NOT_FOUND', `prompt-optimizer: no library entry carries id "${request.id}"`)
+    }
   }
 
   /**

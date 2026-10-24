@@ -3,6 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@yimiliya/dsh-prompt-optimizer'
 import type {
+  PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
   PromptOptimizeRequest,
@@ -100,6 +101,23 @@ export default class PromptOptimizerController extends TypertRemoteService {
     signal.throwIfAborted()
     try {
       return await this.ctx.promptOptimizer.listPrompts(signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/library-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Delete one stored entry from the durable prompt library.
+   * @param request - requesting session and the entry's library id.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   */
+  @Remote
+  async deletePrompt(request: PromptLibraryDeleteRequest, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    try {
+      await this.ctx.promptOptimizer.deletePrompt(request, signal)
     } catch (error) {
       signal.throwIfAborted()
       const reason = error instanceof Error ? error.message : String(error)

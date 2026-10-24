@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-info'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
+  PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
   PromptOptimizeRequest,
@@ -20,6 +21,7 @@ import type {
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace$70726f6d70744f7074696d697a6572 {
+    deletePrompt: (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     evolveRole: (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
     listPrompts: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     listRoles: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
@@ -29,6 +31,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     verify: (request: PromptVerifyRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptVerifyResult>>
   }
   interface TypertRemoteMap {
+    'promptOptimizer/deletePrompt': (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     'promptOptimizer/evolveRole': (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
     'promptOptimizer/listPrompts': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     'promptOptimizer/listRoles': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
@@ -55,6 +58,13 @@ const _v1 = () => (_v1$value ??= z.array(z.object({
   'id': z.string().readonly().describe('Role slug matching a `<slug>.md` definition file in the configured roles directory.'),
   'name': z.string().readonly().describe('Human-facing role name parsed from the definition\'s first heading; the slug when no heading exists.'),
 })))
+let _deletePrompt_parameter_0$value
+const _deletePrompt_parameter_0 = () => (_deletePrompt_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session requesting the deletion.'),
+  'id': z.string().readonly().describe('Library id of the entry to remove.'),
+}))
+let _deletePrompt_result$value
+const _deletePrompt_result = () => (_deletePrompt_result$value ??= z.void())
 let _evolveRole_parameter_0$value
 const _evolveRole_parameter_0 = () => (_evolveRole_parameter_0$value ??= z.object({
   'sessionId': z.string().readonly().describe('Session that produced the round; owns the evolution log and route fallback.'),
@@ -78,6 +88,7 @@ const _optimize_parameter_0 = () => (_optimize_parameter_0$value ??= z.object({
   'target': z.union([z.literal('draft'), z.literal('system')]).readonly().optional().describe('What the text is: `draft` (default) optimizes a chat message, `system` a standing system prompt with a critique round.'),
   'role': z.string().readonly().optional().describe('Role slug whose definition styles the rewrite; absent for a generic rewrite.'),
   'language': z.string().readonly().optional().describe('Self-describing name of the language the rewrite must be written in (for example `中文`); absent keeps the draft\'s language.'),
+  'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional().describe('Direction the next rewrite should push toward; absent applies the plain rules.'),
 }))
 let _optimize_result$value
 const _optimize_result = () => (_optimize_result$value ??= z.object({
@@ -92,6 +103,7 @@ const _optimize_result = () => (_optimize_result$value ??= z.object({
   'provider': z.string().readonly().describe('Exact provider route that produced the result.'),
   'model': z.string().readonly().describe('Exact model id that produced the result.'),
   'role': z.string().readonly().optional().describe('Role slug that styled the round; absent when no role was requested.'),
+  'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional().describe('Direction the round applied; absent when the plain rules governed it.'),
   'skills': z.array(z.string()).readonly().optional().describe('Names of the installed-skill hints that conditioned the round; absent when none matched.'),
   'usage': z.object({
     'inputTokens': z.number(),
@@ -142,6 +154,11 @@ const _verify_result = () => (_verify_result$value ??= z.object({
   'output': z.string().readonly().describe('Combined stdout and stderr, truncated to the service\'s output cap.'),
   'durationMs': z.number().readonly().describe('Wall time from dispatch to completion.'),
 }))
+let _deletePrompt_parameter_0_strict$value
+const _deletePrompt_parameter_0_strict = () => (_deletePrompt_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+  'id': z.string().readonly(),
+}))
 let _evolveRole_parameter_0_strict$value
 const _evolveRole_parameter_0_strict = () => (_evolveRole_parameter_0_strict$value ??= z.strictObject({
   'sessionId': z.string().readonly(),
@@ -158,6 +175,7 @@ const _optimize_parameter_0_strict = () => (_optimize_parameter_0_strict$value ?
   'target': z.union([z.literal('draft'), z.literal('system')]).readonly().optional(),
   'role': z.string().readonly().optional(),
   'language': z.string().readonly().optional(),
+  'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional(),
 }))
 let _recommendRoles_parameter_0_strict$value
 const _recommendRoles_parameter_0_strict = () => (_recommendRoles_parameter_0_strict$value ??= z.strictObject({
@@ -180,6 +198,38 @@ const _verify_parameter_0_strict = () => (_verify_parameter_0_strict$value ??= z
 export const TYPERT_REMOTE = createTypertRemoteInfo({
   package: '@yimiliya/dsh-api-prompt-optimizer',
   methods: {
+    'promptOptimizer/deletePrompt': {
+      service: 'promptOptimizerController',
+      description: 'Delete one stored entry from the durable prompt library.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'requesting session and the entry\'s library id.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptLibraryDeleteRequest',
+            create: _deletePrompt_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, id: { type: 'string' } }, required: ['sessionId', 'id'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptLibraryDeleteRequest',
+            create: _deletePrompt_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, id: { type: 'string' } }, required: ['sessionId', 'id'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptLibraryDeleteRequest:void',
+        create: _deletePrompt_result,
+        jsonSchemaError: 'typert tool schema: unsupported void value',
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 117, column: 9 },
+    },
     'promptOptimizer/evolveRole': {
       service: 'promptOptimizerController',
       description: 'Rewrite one role definition from the round\'s draft and optimized result.',
@@ -256,13 +306,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' } }, required: ['sessionId', 'text'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] } }, required: ['sessionId', 'text'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' } }, required: ['sessionId', 'text'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] } }, required: ['sessionId', 'text'], additionalProperties: false },
           },
         },
       ],
@@ -272,7 +322,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeResult',
         create: _optimize_result,
         description: 'the parsed optimization result for preview.',
-        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, skills: { type: 'array', items: { type: 'string' } }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 43, column: 9 },
     },

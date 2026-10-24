@@ -25,8 +25,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 }
 
 export type {
+  PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
+  PromptOptimizeDirection,
   PromptOptimizeRequest,
   PromptOptimizeResult,
   PromptOptimizeTarget,
