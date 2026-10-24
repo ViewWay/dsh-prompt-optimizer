@@ -9,7 +9,7 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import type { SessionPendingInteractionBase } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
+import type { PromptOptimizeDirection, PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
 
 /** Identity of one pending queue item the round may rewrite in place. */
 export type QueueItemId = InputState['queue'][number]['id']
@@ -26,6 +26,8 @@ export interface OptimizationState {
   readonly previousAttempts: readonly string[]
   /** Role slug styling the round; undefined for a generic rewrite. */
   readonly role: string | undefined
+  /** Direction the round pushed toward; absent for the plain rules. */
+  readonly direction?: PromptOptimizeDirection | undefined
   /** Pending queue item the round rewrites in place; absent for a draft round. */
   readonly queueItemId?: QueueItemId
   /** Result of the completed round; present only in `ready`. */
@@ -62,6 +64,29 @@ export class PromptOptimizationPreview implements SessionPendingInteractionBase 
 
   constructor(readonly sessionId: SessionId) {
     this.key = PromptOptimizationPreview.keyOf(sessionId)
+  }
+}
+
+/**
+ * Carrier published to the Session pending-interaction registry while the
+ * prompt-library panel is open; elects the library panel into the composer
+ * seat through its own registration.
+ */
+export class PromptLibraryPreview implements SessionPendingInteractionBase {
+  readonly kind = 'prompt-library'
+
+  /**
+   * Derive the library seat's carrier key for one Session.
+   * @param sessionId - Session whose library seat the key addresses.
+   * @returns the fixed carrier key of one Session's library seat.
+   */
+  static keyOf(sessionId: SessionId): string {
+    return `prompt-library:${sessionId}`
+  }
+  readonly key: string
+
+  constructor(readonly sessionId: SessionId) {
+    this.key = PromptLibraryPreview.keyOf(sessionId)
   }
 }
 

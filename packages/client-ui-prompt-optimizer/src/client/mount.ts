@@ -11,6 +11,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { ComposerChainProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
+  PromptLibraryEntry,
+  PromptOptimizeDirection,
   PromptOptimizeTarget,
   PromptOptimizerSettings as PromptOptimizerSettingsSection,
   PromptRoleEvolveResult,
@@ -19,12 +21,13 @@ import type {
   PromptVerifyResult,
 } from '@yimiliya/dsh-prompt-optimizer/types'
 import type { TypertRemoteContribution } from '@deepseek-ai/dsh-typert-protocol'
+import { LibraryPanel } from './LibraryPanel.tsx'
 import { OptimizeButton } from './OptimizeButton.tsx'
 import { PreviewPanel } from './PreviewPanel.tsx'
 import { QueueItemOptimizeEntry } from './QueueItemOptimizeEntry.tsx'
 import { PromptOptimizerSettings } from './PromptOptimizerSettings.tsx'
 import { PromptOptimizerSettingsForm } from './settings-form.ts'
-import { createOptimizationStore, PromptOptimizationPreview } from './optimization.ts'
+import { createOptimizationStore, PromptLibraryPreview, PromptOptimizationPreview } from './optimization.ts'
 import type { QueueItemId } from './optimization.ts'
 import { en, NS, zh } from './locales.ts'
 
@@ -41,6 +44,8 @@ interface RoundRequest {
   readonly apply: (text: string) => void
   readonly target: PromptOptimizeTarget
   readonly role: string | undefined
+  /** Direction the round pushes toward; undefined applies the plain rules. */
+  readonly direction: PromptOptimizeDirection | undefined
   /** Pending queue item the round rewrites in place; absent for a draft round. */
   readonly queueItemId: QueueItemId | undefined
 }
@@ -65,13 +70,21 @@ function registerUi(ctx: Context): void {
   const store = createOptimizationStore()
   const rounds = new Map<SessionId, Round>()
   const previews = new Map<SessionId, () => void>()
+  const libraryPreviews = new Map<SessionId, () => void>()
+  const libraryInserts = new Map<SessionId, (text: string) => void>()
   const registerPendingInteraction = ctx.uiSession.registerPendingInteraction<PromptOptimizationPreview>(
+    () => 0,
+  )
+  const registerLibraryInteraction = ctx.uiSession.registerPendingInteraction<PromptLibraryPreview>(
     () => 0,
   )
   ctx.effect(() => () => {
     for (const round of rounds.values()) round.controller.abort(new Error('prompt optimizer unloaded'))
     for (const unpublish of previews.values()) unpublish()
     previews.clear()
+    for (const unpublish of libraryPreviews.values()) unpublish()
+    libraryPreviews.clear()
+    libraryInserts.clear()
   })
 
   const dismiss = (sessionId: SessionId): void => {
@@ -85,6 +98,13 @@ function registerUi(ctx: Context): void {
     store.update((draft) => { Reflect.deleteProperty(draft, sessionId) })
   }
 
+  /** Close one Session's library panel and drop its registered draft insert. */
+  const closeLibrary = (sessionId: SessionId): void => {
+    libraryPreviews.get(sessionId)?.()
+    libraryPreviews.delete(sessionId)
+    libraryInserts.delete(sessionId)
+  }
+
   const runRound = (sessionId: SessionId, state: RoundRequest): void => {
     const round = rounds.get(sessionId)
     if (round !== undefined) round.controller.abort(new Error('superseded by a new round'))
@@ -93,6 +113,7 @@ function registerUi(ctx: Context): void {
     store.update((draft) => {
       draft[sessionId] = {
         phase: 'running', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
+        direction: state.direction,
         ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
         result: undefined, error: undefined, apply: state.apply,
       }
@@ -108,6 +129,7 @@ function registerUi(ctx: Context): void {
             ...(state.target !== 'draft' ? { target: state.target } : {}),
             ...(state.role !== undefined ? { role: state.role } : {}),
             ...(language !== undefined ? { language } : {}),
+            ...(state.direction !== undefined ? { direction: state.direction } : {}),
           },
           controller.signal,
         )
@@ -117,6 +139,7 @@ function registerUi(ctx: Context): void {
           draft[sessionId] = {
             // The resolved role (host defaultRole included) is what the round used.
             phase: 'ready', draft: state.draft, previousAttempts: state.previousAttempts, role: result.value.role,
+            direction: state.direction,
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             result: result.value, error: undefined, apply: state.apply,
           }
@@ -127,6 +150,7 @@ function registerUi(ctx: Context): void {
         store.update((draft) => {
           draft[sessionId] = {
             phase: 'failed', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
+            direction: state.direction,
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             result: undefined, error: message, apply: state.apply,
           }
@@ -139,9 +163,18 @@ function registerUi(ctx: Context): void {
 
   /** Open the preview seat for one round, draft or queued item alike. */
   const openPreview = (sessionId: SessionId): void => {
+    closeLibrary(sessionId)
     previews.get(sessionId)?.()
     const preview = new PromptOptimizationPreview(sessionId)
     previews.set(sessionId, registerPendingInteraction(preview, () => { dismiss(sessionId); return Promise.resolve() }))
+  }
+
+  /** Open the library panel for one Session, registering how a picked entry replaces the draft. */
+  const openLibrary = (sessionId: SessionId, insert: (text: string) => void): void => {
+    closeLibrary(sessionId)
+    libraryInserts.set(sessionId, insert)
+    const preview = new PromptLibraryPreview(sessionId)
+    libraryPreviews.set(sessionId, registerLibraryInteraction(preview, () => { closeLibrary(sessionId); return Promise.resolve() }))
   }
 
   /** Rewrite one pending queue item in place through the conversation service. */
@@ -153,26 +186,32 @@ function registerUi(ctx: Context): void {
     await conversation.updateQueue(itemId, { kind: 'edit', content: [{ type: 'text', text }] })
   }
 
-  /** Re-run one Session's round over the same draft with the given target and role. */
-  const rerun = (sessionId: SessionId, target: PromptOptimizeTarget, role: string | undefined): void => {
+  /** Re-run one Session's round over the same draft with the given target and role; an undefined
+   * direction keeps the state's current direction. */
+  const rerun = (
+    sessionId: SessionId,
+    target: PromptOptimizeTarget,
+    role: string | undefined,
+    direction?: PromptOptimizeDirection,
+  ): void => {
     const state = store.getSnapshot()[sessionId]
     if (state === undefined || (state.queueItemId === undefined && state.apply === undefined)) return
     const rejected = state.result === undefined ? state.previousAttempts : [...state.previousAttempts, state.result.optimizedText]
     runRound(sessionId, {
       draft: state.draft, previousAttempts: rejected, apply: state.apply ?? (() => {}), target,
-      role, queueItemId: state.queueItemId,
+      role, direction: direction ?? state.direction, queueItemId: state.queueItemId,
     })
   }
 
   const actions = {
     start: (sessionId: SessionId, text: string, apply: (text: string) => void, role?: string): void => {
       openPreview(sessionId)
-      runRound(sessionId, { draft: text, previousAttempts: [], apply, target: 'draft', role, queueItemId: undefined })
+      runRound(sessionId, { draft: text, previousAttempts: [], apply, target: 'draft', role, direction: undefined, queueItemId: undefined })
     },
     startQueued: (sessionId: SessionId, itemId: QueueItemId, text: string, role?: string): void => {
       openPreview(sessionId)
       runRound(sessionId, {
-        draft: text, previousAttempts: [], apply: () => {}, target: 'draft', role, queueItemId: itemId,
+        draft: text, previousAttempts: [], apply: () => {}, target: 'draft', role, direction: undefined, queueItemId: itemId,
       })
     },
     apply: (sessionId: SessionId): void => {
@@ -213,6 +252,12 @@ function registerUi(ctx: Context): void {
     regenerateAsRole: (sessionId: SessionId, role: string | undefined): void => {
       rerun(sessionId, 'draft', role)
     },
+    regenerateWithDirection: (sessionId: SessionId, direction: PromptOptimizeDirection): void => {
+      rerun(sessionId, 'draft', store.getSnapshot()[sessionId]?.role, direction)
+    },
+    openLibrary: (sessionId: SessionId, insert: (text: string) => void): void => {
+      openLibrary(sessionId, insert)
+    },
     loadRoles: async (): Promise<readonly PromptRoleSummary[]> => {
       const result = await ctx.remote.promptOptimizer.listRoles(new AbortController().signal)
       if (!result.ok) throw new Error(result.error.message)
@@ -243,6 +288,29 @@ function registerUi(ctx: Context): void {
       return result.value
     },
     cancel: (sessionId: SessionId): void => { dismiss(sessionId) },
+  }
+
+  /** Inject face the library panel registration serves: library verbs plus the registered draft insert. */
+  const libraryActions = {
+    listLibrary: async (): Promise<readonly PromptLibraryEntry[]> => {
+      const result = await ctx.remote.promptOptimizer.listPrompts(new AbortController().signal)
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
+    },
+    deleteLibraryEntry: async (sessionId: SessionId, id: string): Promise<void> => {
+      const result = await ctx.remote.promptOptimizer.deletePrompt({ sessionId, id }, new AbortController().signal)
+      if (!result.ok) throw new Error(result.error.message)
+    },
+    insertDraft: (sessionId: SessionId, text: string): void => {
+      libraryInserts.get(sessionId)?.(text)
+      closeLibrary(sessionId)
+    },
+    reoptimize: (sessionId: SessionId, text: string): void => {
+      const insert = libraryInserts.get(sessionId) ?? (() => {})
+      closeLibrary(sessionId)
+      actions.start(sessionId, text, insert)
+    },
+    closeLibrary: (sessionId: SessionId): void => { closeLibrary(sessionId) },
   }
 
   const injected = { ...actions, hooks: { optimization: store } }
@@ -280,6 +348,16 @@ function registerUi(ctx: Context): void {
       inject: () => injected,
     },
     PreviewPanel,
+  ))
+  ctx.slots.inject('conversation.composer', () => ctx.slots.register(
+    {
+      name: 'conversation.composer',
+      select: ({ pendingInteraction }: ComposerChainProps): PromptLibraryPreview | null =>
+        pendingInteraction instanceof PromptLibraryPreview ? pendingInteraction : null,
+      locale: NS,
+      inject: () => libraryActions,
+    },
+    LibraryPanel,
   ))
   const settingsForm = new PromptOptimizerSettingsForm(
     ctx.configForms.get<PromptOptimizerSettingsSection>('prompt-optimizer'),

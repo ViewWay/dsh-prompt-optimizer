@@ -2,11 +2,24 @@
 import { useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, IconCheckOutlineRegular, IconCloseOutlineRegular, IconRefreshOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PromptRoleEvolveResult, PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
+import type { PromptOptimizeDirection, PromptRoleEvolveResult, PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
 import type { PromptOptimizationPreview, OptimizationSnapshot } from './optimization.ts'
+import type { PromptOptimizerKey } from './locales.ts'
 import { usePromptRoles } from './use-prompt-roles.ts'
 import { RoleSelector } from './RoleSelector.tsx'
 import css from './PreviewPanel.module.css'
+
+/** Every direction a round may be steered toward, chip order. */
+const PROMPT_DIRECTIONS: readonly PromptOptimizeDirection[] = ['concise', 'detailed', 'technical', 'structured', 'acceptance']
+
+/** Locale key naming each direction's chip. */
+const DIRECTION_LABEL_KEYS: Readonly<Record<PromptOptimizeDirection, PromptOptimizerKey>> = {
+  concise: 'directionConcise',
+  detailed: 'directionDetailed',
+  technical: 'directionTechnical',
+  structured: 'directionStructured',
+  acceptance: 'directionAcceptance',
+}
 
 /** Host verbs injected by the mount; each takes the Session whose preview is open. */
 export interface PreviewPanelActions {
@@ -21,6 +34,11 @@ export interface PreviewPanelActions {
    * @param role - role slug to style the round with, or undefined for no role.
    */
   regenerateAsRole: (sessionId: PromptOptimizationPreview['sessionId'], role: string | undefined) => void
+  /** Re-run the same draft pushing toward one direction; the picked direction stays for later reruns.
+   * @param sessionId - Session whose preview is open.
+   * @param direction - direction the next rewrite must push toward.
+   */
+  regenerateWithDirection: (sessionId: PromptOptimizationPreview['sessionId'], direction: PromptOptimizeDirection) => void
   /** Abort any in-flight round and close the preview. */
   cancel: (sessionId: PromptOptimizationPreview['sessionId']) => void
   /** List the host's selectable role definitions; a failing or empty listing keeps the read-only role badge. */
@@ -126,7 +144,7 @@ const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, er
 
 /** Render one Session's optimization preview in the composer seat. */
 export function PreviewPanel(props: PreviewPanelProps) {
-  const { matched, apply, regenerate, regenerateAsSystem, regenerateAsRole, cancel, loadRoles } = props
+  const { matched, apply, regenerate, regenerateAsSystem, regenerateAsRole, regenerateWithDirection, cancel, loadRoles } = props
   const { verifyCheck, saveToLibrary, evolveRole, useOptimization, t } = props
   const state = useOptimization(snapshot => snapshot[matched.sessionId])
   const [rolesRevision, setRolesRevision] = useState(0)
@@ -279,6 +297,25 @@ export function PreviewPanel(props: PreviewPanelProps) {
               </div>}
           </div>
         </div>
+        {ready || state.phase === 'failed'
+          ? <div className={css.directionRow} data-testid="optimization-directions">
+            <span className={css.directionLabel}>{t('directionLabel')}</span>
+            {PROMPT_DIRECTIONS.map(id => {
+              const active = (state.direction ?? state.result?.direction) === id
+              return (
+                <button
+                  key={id} type="button"
+                  className={active ? css.directionChipActive : css.directionChip}
+                  aria-pressed={active}
+                  data-testid={`direction-${id}`}
+                  onClick={() => { regenerateWithDirection(matched.sessionId, id) }}
+                >
+                  {t(DIRECTION_LABEL_KEYS[id])}
+                </button>
+              )
+            })}
+          </div>
+          : null}
         {ready && state.result.changes.length > 0
           ? <ul className={css.changes} data-testid="optimization-changes">
             {state.result.changes.map(change => <li key={change}>{change}</li>)}

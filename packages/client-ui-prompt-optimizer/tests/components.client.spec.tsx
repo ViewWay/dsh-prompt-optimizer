@@ -10,8 +10,9 @@ import type { InputActions, InputState } from '@deepseek-ai/dsh-client-ui-conver
 import { OptimizeButton, type OptimizeButtonProps } from '../src/client/OptimizeButton.tsx'
 import { QueueItemOptimizeEntry, type QueueItemOptimizeEntryProps } from '../src/client/QueueItemOptimizeEntry.tsx'
 import { PreviewPanel, type PreviewPanelProps } from '../src/client/PreviewPanel.tsx'
+import { LibraryPanel, type LibraryPanelInjected, type LibraryPanelProps } from '../src/client/LibraryPanel.tsx'
 import { PromptOptimizerSettings, type PromptOptimizerSettingsProps } from '../src/client/PromptOptimizerSettings.tsx'
-import { createOptimizationStore, PromptOptimizationPreview, type OptimizationSnapshot, type OptimizationState } from '../src/client/optimization.ts'
+import { createOptimizationStore, PromptLibraryPreview, PromptOptimizationPreview, type OptimizationSnapshot, type OptimizationState } from '../src/client/optimization.ts'
 import { zh } from '../src/client/locales.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type { PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
@@ -66,6 +67,7 @@ function buttonProps(overrides: Partial<OptimizeButtonProps> & { draft?: string;
     startQueued: vi.fn(),
     loadRoles: vi.fn(async () => []),
     recommendRoles: vi.fn(async () => []),
+    openLibrary: vi.fn(),
     useOptimization: <T,>(selector: (snapshot: OptimizationSnapshot) => T): T => selector(store.getSnapshot()),
     t,
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => !['draft', 'state'].includes(key))),
@@ -166,6 +168,13 @@ describe('OptimizeButton', () => {
     for (const call of start.mock.calls) call[2]('替换文本')
     expect(setDraft).toHaveBeenCalledWith('替换文本')
   })
+  it('opens the library with a draft insert on the archive button', () => {
+    const openLibrary = vi.fn()
+    const { props } = buttonProps({ draft: '帮我写脚本', openLibrary })
+    render(<OptimizeButton {...props} />)
+    screen.getByRole('button', { name: zh.libraryOpen }).click()
+    expect(openLibrary).toHaveBeenCalledExactlyOnceWith(SESSION, expect.any(Function))
+  })
 })
 
 describe('QueueItemOptimizeEntry', () => {
@@ -230,6 +239,7 @@ function panelProps(state: OptimizationState | undefined, actions: Partial<Previ
     regenerate: vi.fn(),
     regenerateAsSystem: vi.fn(),
     regenerateAsRole: vi.fn(),
+    regenerateWithDirection: vi.fn(),
     cancel: vi.fn(),
     loadRoles: vi.fn(async () => []),
     verifyCheck: vi.fn(async () => ({ passed: true, exitCode: 0, timedOut: false, output: '', durationMs: 0 })),
@@ -699,5 +709,99 @@ describe('PreviewPanel', () => {
     await waitFor(() => { expect(screen.getByTestId('criterion-check-blocked').textContent).toBe(zh.checkBlocked) })
     expect(screen.getByRole('alert').textContent).toBe(zh.checkBlocked)
     expect(screen.getByTestId('criterion-check').textContent).toContain('network egress')
+  })
+
+  it('offers direction chips that rerun with the picked direction', () => {
+    const regenerateWithDirection = vi.fn()
+    render(<PreviewPanel {...panelProps(READY, { regenerateWithDirection })} />)
+    fireEvent.click(screen.getByTestId('direction-concise'))
+    expect(regenerateWithDirection).toHaveBeenCalledExactlyOnceWith(SESSION, 'concise')
+  })
+
+  it('marks the active direction chip from the round result and hides chips while running', () => {
+    const directed: OptimizationState = { ...READY, result: { ...RESULT, direction: 'structured' } }
+    render(<PreviewPanel {...panelProps(directed)} />)
+    expect(screen.getByTestId('direction-structured').getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByTestId('direction-concise').getAttribute('aria-pressed')).toBe('false')
+
+    const running: OptimizationState = { phase: 'running', draft: 'd', previousAttempts: [], role: undefined, result: undefined, error: undefined, apply: () => {} }
+    cleanup()
+    render(<PreviewPanel {...panelProps(running)} />)
+    expect(screen.queryByTestId('optimization-directions')).toBeNull()
+  })
+})
+
+const LIBRARY_ENTRY = {
+  id: 'entry-1',
+  title: '登录页提示词',
+  text: '目标：实现登录页',
+  createdAt: '2026-10-24T12:34:56.000Z',
+  sourceSessionId: 'session-1' as never,
+}
+
+function libraryProps(overrides: Partial<LibraryPanelInjected> = {}): LibraryPanelProps {
+  return {
+    sessionId: SESSION,
+    matched: new PromptLibraryPreview(SESSION),
+    listLibrary: vi.fn(async () => [LIBRARY_ENTRY]),
+    deleteLibraryEntry: vi.fn(async () => {}),
+    insertDraft: vi.fn(),
+    reoptimize: vi.fn(),
+    closeLibrary: vi.fn(),
+    t,
+    ...overrides,
+  }
+}
+
+describe('LibraryPanel', () => {
+  it('lists stored entries, expands one, and shows its stable date label', async () => {
+    render(<LibraryPanel {...libraryProps()} />)
+    const toggle = await waitFor(() => screen.getByTestId('library-entry-toggle'))
+    expect(toggle.textContent).toContain(LIBRARY_ENTRY.title)
+    expect(toggle.textContent).toContain('2026-10-24 12:34')
+    fireEvent.click(toggle)
+    expect(screen.getByTestId('library-entry-body').textContent).toContain(LIBRARY_ENTRY.text)
+  })
+
+  it('inserts a stored entry into the draft', async () => {
+    const insertDraft = vi.fn()
+    render(<LibraryPanel {...libraryProps({ insertDraft })} />)
+    fireEvent.click(await waitFor(() => screen.getByTestId('library-entry-toggle')))
+    screen.getByRole('button', { name: zh.libraryInsert }).click()
+    expect(insertDraft).toHaveBeenCalledExactlyOnceWith(SESSION, LIBRARY_ENTRY.text)
+  })
+
+  it('starts a re-optimization of a stored entry', async () => {
+    const reoptimize = vi.fn()
+    render(<LibraryPanel {...libraryProps({ reoptimize })} />)
+    fireEvent.click(await waitFor(() => screen.getByTestId('library-entry-toggle')))
+    screen.getByRole('button', { name: zh.libraryReoptimize }).click()
+    expect(reoptimize).toHaveBeenCalledExactlyOnceWith(SESSION, LIBRARY_ENTRY.text)
+  })
+
+  it('deletes through the two-step confirm and empties the list', async () => {
+    const deleteLibraryEntry = vi.fn(async () => {})
+    render(<LibraryPanel {...libraryProps({ deleteLibraryEntry })} />)
+    fireEvent.click(await waitFor(() => screen.getByTestId('library-entry-toggle')))
+    const del = screen.getByTestId('library-delete')
+    fireEvent.click(del)
+    expect(deleteLibraryEntry).not.toHaveBeenCalled()
+    expect(del.textContent).toContain(zh.libraryConfirmDelete)
+    fireEvent.click(screen.getByTestId('library-delete'))
+    await waitFor(() => { expect(deleteLibraryEntry).toHaveBeenCalledExactlyOnceWith(SESSION, LIBRARY_ENTRY.id) })
+    await waitFor(() => { expect(screen.getByTestId('library-empty')).toBeTruthy() })
+  })
+
+  it('surfaces a failed listing with a retry and shows the empty state', async () => {
+    const failing = vi.fn(async () => { throw new Error('no storage domain') })
+    const props = libraryProps({ listLibrary: failing })
+    render(<LibraryPanel {...props} />)
+    await waitFor(() => { expect(screen.getByTestId('library-error')).toBeTruthy() })
+    screen.getByRole('button', { name: zh.libraryRetry }).click()
+    await waitFor(() => { expect(failing).toHaveBeenCalledTimes(2) })
+
+    cleanup()
+    render(<LibraryPanel {...libraryProps({ listLibrary: vi.fn(async () => []) })} />)
+    await waitFor(() => { expect(screen.getByTestId('library-empty')).toBeTruthy() })
   })
 })

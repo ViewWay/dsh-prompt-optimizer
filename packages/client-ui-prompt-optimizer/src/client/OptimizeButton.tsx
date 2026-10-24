@@ -1,7 +1,7 @@
 /** Compact composer trigger: starts one optimization round for the draft. */
 import { useEffect, useMemo, useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { Button, IconThinkOutlineRegular, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconThinkOutlineRegular, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   PromptRoleRecommendation,
@@ -56,6 +56,8 @@ export interface OptimizeButtonActions {
   loadRoles: () => Promise<readonly PromptRoleSummary[]>
   /** Rank roles for the draft plus pending inbox context; a failing call hides the chips. */
   recommendRoles: (sessionId: SessionId, text: string) => Promise<readonly PromptRoleRecommendation[]>
+  /** Open the prompt-library panel; `insert` replaces the composer draft when a stored entry is picked. */
+  openLibrary: (sessionId: SessionId, insert: (text: string) => void) => void
 }
 
 /** Inject face shared by the mount: round verbs plus the state hook source. */
@@ -70,7 +72,7 @@ export type OptimizeButtonProps =
 
 /** Render the toolbar trigger; the preview panel owns everything after the click. */
 export function OptimizeButton(
-  { sessionId, useInput, inputActions, start, startQueued, loadRoles, recommendRoles, useOptimization, t }: OptimizeButtonProps,
+  { sessionId, useInput, inputActions, start, startQueued, loadRoles, recommendRoles, openLibrary, useOptimization, t }: OptimizeButtonProps,
 ) {
   const draft = useInput(input => input.draft)
   const rawQueue = useInput(input => input.queue)
@@ -132,6 +134,14 @@ export function OptimizeButton(
             ))}
           </span>
         )}
+        <Tooltip label={t('libraryOpen')} side="top" portal>
+          <Button
+            className={css.trigger} size="sm" aria-label={t('libraryOpen')} data-testid="open-library"
+            onClick={() => { openLibrary(sessionId, text => { inputActions.setDraft(text) }) }}
+          >
+            <IconArchiveOutlineRegular size={18} />
+          </Button>
+        </Tooltip>
         <Button className={css.trigger} size="sm" disabled={disabled} aria-label={t('optimize')} onClick={() => { startWith() }}>
           {busy ? <StateDot state="ongoing" /> : <IconThinkOutlineRegular size={18} />}
         </Button>
