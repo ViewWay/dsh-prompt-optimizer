@@ -39,6 +39,22 @@ describe('selectSkillHints', () => {
     expect(selectSkillHints('', skills)).toEqual([])
   })
 
+  it('bridges Chinese draft terms to English-described skills through the gloss', () => {
+    const hints = selectSkillHints('帮我做一个登录页面，要求响应式布局', [
+      summary({ name: 'frontend-design', description: 'Guidance for intentional visual design when building new UI or reshaping an existing one.' }),
+      summary({ name: 'tdd', description: 'Test-driven development with a red-green-refactor loop.' }),
+    ])
+    expect(hints.map(hint => hint.name)).toEqual(['frontend-design'])
+  })
+
+  it('bridges English drafts to Chinese-described skills through the gloss', () => {
+    const hints = selectSkillHints('generate Chinese comments for the firmware source files', [
+      summary({ name: 'lucas-annotation', description: '为嵌入式 C/C++ 源码生成、补充、修订或审查可被 Doxygen 识别的简体中文注释。' }),
+      summary({ name: 'benchmark-runner', description: 'Runs performance benchmarks.' }),
+    ])
+    expect(hints.map(hint => hint.name)).toEqual(['lucas-annotation'])
+  })
+
   it('clips long descriptions with an explicit ellipsis', () => {
     const long = 'a'.repeat(200)
     const hints = selectSkillHints('run the pre-push checks', [

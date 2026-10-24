@@ -229,6 +229,7 @@ describe('skill conditioning', () => {
   it('appends the exact-name skill block to every round prompt', () => {
     const draft = optimizerSystemPrompt({ skills: hints })
     expect(draft).toContain('Installed skills for this agent that match the draft')
+    expect(draft).toContain('weave it into the rewrite: name the skill by its exact name at the exact step')
     expect(draft).toContain('never invent, rename, or guess skill names')
     expect(draft).toContain('- dsh-pre-push-checks — Run the repository pre-push check suite before pushing. [runtime]')
     expect(draft.indexOf('Installed skills')).toBeLessThan(draft.indexOf('Respond with exactly'))

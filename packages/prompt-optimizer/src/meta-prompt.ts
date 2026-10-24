@@ -222,7 +222,8 @@ function skillBlock(skills: readonly SkillHint[]): readonly string[] {
   return [
     '',
     'Installed skills for this agent that match the draft (name — description [origin]):',
-    'Reference a listed skill only by its exact name and only when it clearly serves the task; never invent, rename, or guess skill names. When none applies, mention no skill.',
+    'When a listed skill clearly serves the task, weave it into the rewrite: name the skill by its exact name at the exact step where the agent should load it, with one phrase saying what to use it for.',
+    'Reference a listed skill only by its exact name; never invent, rename, or guess skill names. When none clearly applies, mention no skill at all.',
     'When a hint lists params, the rewrite may reference only those exact parameter names; never invent parameters.',
     ...skills.map(hint => renderSkillHint(hint)),
   ]
