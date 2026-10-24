@@ -6,7 +6,7 @@
  * modules with lightningcss into a plugin-owned style tag.
  */
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, resolve as resolvePath } from 'node:path'
+import { dirname, resolve as resolvePath } from 'node:path'
 import { defineConfig, type TsdownPlugin, type UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
 
@@ -44,7 +44,9 @@ const cssModules: TsdownPlugin = {
     const { code, exports } = transform({
       code: Buffer.from(source),
       filename: fileId,
-      cssModules: { pattern: `${basename(fileId, '.module.css')}_[local]` },
+      // Hash-namespaced classes stay collision-free when another plugin ships
+      // a module css with the same file basename.
+      cssModules: { pattern: '[hash]_[local]' },
       minify: true,
     })
     const classMap: Record<string, string> = {}
