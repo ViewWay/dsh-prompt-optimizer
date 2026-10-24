@@ -1,6 +1,6 @@
 # 内置示例角色库
 
-本目录是 prompt-optimizer 的内置示例角色库：20 个开箱即用的角色定义文件，供 `rolesDir` 直接指向使用，也可复制到任意目录后按需增删定制。
+本目录是 prompt-optimizer 的内置示例角色库：164 个开箱即用的角色定义文件，供 `rolesDir` 直接指向使用，也可复制到任意目录后按需增删定制。前 20 个为本仓库原创的评审/优化向角色；其余 144 个移植自本机 FlowPilot 项目角色库（已剥离 frontmatter、按本目录契约校验），覆盖后端/前端/嵌入式（em-*）/软件工程（sw-*）/底层系统（sys-*）/行业专项（oc-*）/功能架构（fa-*）/提示词与文本（lg-*）/科研（hy-*）等谱系。角色数超过 60 时，优化面板的角色选择器自动切换为可搜索的过滤形态。
 
 ## 角色文件契约
 
@@ -40,3 +40,13 @@ plugins:
 4. 在对话输入框对一段草稿发起优化：优化面板的角色选择器应可选同一批角色，或直接使用推荐角色完成一次成稿。
 
 若设置页出现「未配置角色目录」占位与引导提示，说明 `rolesDir` 未配置或指向的目录没有可用的角色文件，按上文核对路径与文件名后重试。
+
+## 移植角色的来源与许可
+
+144 个移植角色在 FlowPilot 侧均有逐源许可核查记录（「许可不明即整源跳过」原则）。移植范围与义务如下：
+
+- **FlowPilot 原创角色（约 115 个）**：初始通用角色、`imp-` 自写批次、`em-*`（嵌入式专项）、`sw-*`（软件工程专项）、`sys-*`（底层系统专项）、`oc-*`（行业专项）。无第三方语料，无附加义务。
+- **`fa-*` 11 个**：改写自 [f/awesome-chatgpt-prompts](https://github.com/f/awesome-chatgpt-prompts)，提示词文本以 CC0 1.0 Universal 贡献公共领域，无署名义务；原始条目主要源自贡献者 wkaandemir 与 ersinyilmaz，在此致谢。
+- **`lg-*` 10 个**：改写自 [langgptai/wonderful-prompts](https://github.com/langgptai/wonderful-prompts)（MIT License, Copyright (c) 2023 yzfly）。MIT 要求在副本中保留版权与许可声明：上述仓库的软件与文本按 MIT 授权使用、复制、修改与再分发，须保留版权声明与本许可声明；按「现状」提供，不附任何担保。
+- **`hy-*` 3 个**：改写自 [HughYau/AIscientists_prompts](https://github.com/HughYau/AIscientists_prompts)（Apache License 2.0）。依 Apache-2.0 须保留版权与许可声明并注明修改：本目录中的对应文件为面向提示词优化场景的重写衍生，非原文搬运。
+- **未移植**：`px-*` 前缀 24 个与 `imp-` 前缀中改写自 plexpt/awesome-chatgpt-prompts-zh 的 25 个（生活/娱乐/文案向为主，与本插件的编码代理定位不符）；另剔除与本仓库原创 20 角色概念重复的 9 个（`imp-api-designer`、`imp-code-reviewer`、`imp-performance-engineer`、`imp-refactoring-advisor`、`imp-accessibility-auditor`、`fa-error-handling-designer`、`sw-i18n-engineer`、`security-reviewer`、`technical-writer`），以本仓库版本为准。
