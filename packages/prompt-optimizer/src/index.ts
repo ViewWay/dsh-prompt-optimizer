@@ -209,15 +209,38 @@ const libraryDomainSpec = defineDomain({
   },
 })
 
+/** Credential-shaped patterns scrubbed from verify output before it is kept or shown. */
+const SECRET_PATTERNS: readonly RegExp[] = [
+  /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
+  /AKIA[0-9A-Z]{16}/g,
+  /ghp_[A-Za-z0-9]{20,}/g,
+  /sk-[A-Za-z0-9]{20,}/g,
+  /xox[bpars]-[A-Za-z0-9-]{10,}/g,
+  /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+]
+
 /**
- * Clip combined check-command output to {@link VERIFY_OUTPUT_MAX_CHARS}.
+ * Replace common credential shapes (bearer tokens, AWS key ids, GitHub/Slack/
+ * OpenAI-style tokens, JWTs) with `[REDACTED]` so check-command output never
+ * echoes a secret into a result or the session log.
  * @param text - complete `command + stdout + stderr` text.
- * @returns the head of the text, marked when truncation occurred.
+ * @returns the text with every matching secret replaced.
+ */
+function redactSecrets(text: string): string {
+  return SECRET_PATTERNS.reduce((scrubbed, pattern) => scrubbed.replaceAll(pattern, '[REDACTED]'), text)
+}
+
+/**
+ * Redact credential shapes, then clip combined check-command output to
+ * {@link VERIFY_OUTPUT_MAX_CHARS}.
+ * @param text - complete `command + stdout + stderr` text.
+ * @returns the redacted head of the text, marked when truncation occurred.
  */
 function truncateVerifyOutput(text: string): string {
-  return text.length <= VERIFY_OUTPUT_MAX_CHARS
-    ? text
-    : `${text.slice(0, VERIFY_OUTPUT_MAX_CHARS)}\n… (truncated)`
+  const redacted = redactSecrets(text)
+  return redacted.length <= VERIFY_OUTPUT_MAX_CHARS
+    ? redacted
+    : `${redacted.slice(0, VERIFY_OUTPUT_MAX_CHARS)}\n… (truncated)`
 }
 
 /**

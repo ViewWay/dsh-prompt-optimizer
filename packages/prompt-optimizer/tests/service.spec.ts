@@ -525,6 +525,30 @@ describe('PromptOptimizer.verify', () => {
     expect(result.output).toContain('(truncated)')
   })
 
+  it('redacts credential shapes from the returned output and the logged record', async () => {
+    const secret = [
+      'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789',
+      'aws: AKIAIOSFODNN7EXAMPLE',
+      'github: ghp_a1B2c3D4e5F6g7H8i9J0k1',
+      'api: sk-AbCdEf0123456789AbCdEf',
+      'slack: xoxb-1234567890-abcdef',
+      'jwt: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVad61ss5vw',
+      'plain: https://example.com/a/b?x=1234567890123 /usr/local/bin/node 42',
+    ].join('\n')
+    const { ctx, sessionId } = await withShell(0, secret)
+
+    const result = await ctx.promptOptimizer.verify(
+      { sessionId, criterion: '配置检查', command: 'cat config' }, new AbortController().signal,
+    )
+
+    expect(result.output).not.toMatch(/Bearer |AKIA|ghp_|sk-Ab|xoxb|eyJ/)
+    expect(result.output.match(/\[REDACTED\]/g)).toHaveLength(6)
+    expect(result.output).toContain('Authorization: [REDACTED]')
+    expect(result.output).toContain('plain: https://example.com/a/b?x=1234567890123 /usr/local/bin/node 42')
+    const record = verifyRecords(ctx.sessions.get(sessionId)!.snapshotEvents())[0]
+    expect(record?.output).toBe(result.output)
+  })
+
   it('fails typed without a composed shell executor', async () => {
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())
