@@ -11,6 +11,8 @@ A standalone, independently distributed plugin family for the DeepSeek Harness t
 - One-click **Optimize** button on the input box plus domain recommendation chips; multi-round optimization with retry and per-round diff preview
 - **Role library** (`<slug>.md` files): a 164-role catalog ships inside the package and is used whenever `rolesDir` is unset; list roles on demand, recommend by draft, re-run with an explicit role; set a default role in the settings page
 - **Skill awareness** (`skillAware`): when a draft matches an installed skill, its name and description are folded into the meta-prompt so the output references those skills — guarded by exact-name constraints against hallucination. Chinese and English drafts both match: a built-in bilingual gloss bridges Chinese terms like 页面／接口／部署 to English-described skills and back
+- **Optimization directions**: five chips on the preview panel (more concise / more detailed / more technical / restructure / stronger acceptance) re-run the round toward a picked direction and echo the active one; directions are a fixed enum — no free text, so no prompt injection
+- **Prompt library**: save any result with one click; the library button on the input row opens a management panel — browse, expand, insert into the draft, re-optimize from a stored entry, or delete with a two-step confirm (newest first)
 - **Output language follows the agent UI language**: a Chinese interface yields Chinese prompts, English yields English, while code identifiers, paths and commands stay verbatim
 - Inline **Optimize** entry on queued (unsent) conversation items
 - **Acceptance criteria**: mechanical criteria ship with an executable check-command template
@@ -35,7 +37,7 @@ Quick checklist:
 4. **Verifiable acceptance** — every criterion checkable by command or judgment point;
 5. **Sound skill references** — named skills genuinely fit the task and match their exact names.
 
-When any check fails: hit **Regenerate** — the rejected result rides into the next round as a prior attempt, so the model must produce a meaningfully different revision; or re-run with another role, or switch to the system-prompt mode.
+When any check fails: hit **Regenerate** — the rejected result rides into the next round as a prior attempt, so the model must produce a meaningfully different revision; or click a direction chip (more concise / more detailed / more technical / restructure / stronger acceptance) to re-run toward that direction; or re-run with another role, or switch to the system-prompt mode. Save what works with **Save to prompt library**, then recall, re-optimize, or delete it any time from the library button on the input row.
 
 ## Repository layout
 
