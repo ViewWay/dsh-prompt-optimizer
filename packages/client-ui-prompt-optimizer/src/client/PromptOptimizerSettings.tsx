@@ -20,6 +20,9 @@ export interface PromptOptimizerSettingsInjected extends PromptOptimizerFormInje
 export type PromptOptimizerSettingsProps =
   PropsRuntime<'plugins.bundle.config'> & PropsLocale<typeof NS> & InjectFace<PromptOptimizerSettingsInjected>
 
+/** Value of the disabled placeholder option; underscores keep it outside the host's role-slug shape so it can never stage as a role. */
+const ROLES_UNAVAILABLE_VALUE = '__roles_unavailable__'
+
 /**
  * Render the staged default-role preference: a picker over the host's listed
  * roles with an unstyled default and a marked option for a stored slug that no
@@ -33,18 +36,21 @@ export function PromptOptimizerSettings(props: PromptOptimizerSettingsProps) {
   const state = props.useSettingsForm(value => value)
   const [roles, setRoles] = useState<readonly PromptRoleSummary[]>([])
   const [rolesFailed, setRolesFailed] = useState(false)
+  const [rolesLoaded, setRolesLoaded] = useState(false)
   useEffect(() => {
     let alive = true
     // A failing listing keeps the field a plain staged slug; the card stays usable.
     void props.loadRoles().then(
-      (summaries) => { if (alive) { setRoles(summaries); setRolesFailed(false) } },
-      (error: unknown) => { void error; if (alive) { setRoles([]); setRolesFailed(true) } },
+      (summaries) => { if (alive) { setRoles(summaries); setRolesFailed(false); setRolesLoaded(true) } },
+      (error: unknown) => { void error; if (alive) { setRoles([]); setRolesFailed(true); setRolesLoaded(true) } },
     )
     return () => { alive = false }
   }, [props.loadRoles])
   const disabled = !state.writable || state.saving
   const stored = state.defaultRole.text.trim()
   const missingRole = stored !== '' && !roles.some(summary => summary.id === stored)
+  // Decided only after the listing settles: an empty or failing listing means rolesDir is unset or holds no definitions.
+  const rolesUnavailable = rolesLoaded && (rolesFailed || roles.length === 0)
   return <>
     {props.queueEntryUnavailable && <p role="status" className={css.hint}>{t('settingsQueueEntryUnavailable')}</p>}
     <SettingsForm labels={{
@@ -62,11 +68,12 @@ export function PromptOptimizerSettings(props: PromptOptimizerSettingsProps) {
       <select id={roleId} value={stored} disabled={disabled} aria-invalid={state.defaultRole.invalid || undefined}
         onChange={(event) => { props.edit('defaultRole', event.target.value) }}>
         <option value="">{t('roleNone')}</option>
+        {rolesUnavailable && <option value={ROLES_UNAVAILABLE_VALUE} disabled>{t('settingsRolesPlaceholder')}</option>}
         {missingRole && <option value={stored} disabled>{t('settingsRoleUnavailableOption', { role: stored })}</option>}
         {roles.map(summary => <option key={summary.id} value={summary.id}>{summary.name}</option>)}
       </select>
       {state.defaultRole.invalid && <p role="status">{t('settingsRoleUnavailableOption', { role: stored })}</p>}
-      {rolesFailed && !state.defaultRole.invalid && <p role="status" className={css.hint}>{t('settingsRolesUnavailable')}</p>}
+      {rolesUnavailable && !state.defaultRole.invalid && <p role="status" className={css.hint}>{t('settingsRolesDirGuide')}</p>}
     </div>
     </SettingsForm>
   </>

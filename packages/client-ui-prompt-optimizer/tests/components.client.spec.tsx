@@ -284,12 +284,31 @@ describe('PromptOptimizerSettings', () => {
     expect(select).toHaveProperty('value', 'imp-gone')
   })
 
-  it('reports the roles listing failure without blocking the form', async () => {
+  it('reports the roles listing failure with rolesDir guidance, without blocking the form', async () => {
     const { props } = settingsProps()
     ;(props.loadRoles as unknown as ReturnType<typeof vi.fn>) = vi.fn(async () => { throw new Error('rolesDir unset') })
     render(<PromptOptimizerSettings {...props} />)
-    await waitFor(() => { expect(screen.getByText(zh.settingsRolesUnavailable)).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText(zh.settingsRolesDirGuide)).toBeTruthy() })
+    expect(screen.getByLabelText(zh.settingsDefaultRole).textContent).toContain(zh.settingsRolesPlaceholder)
     expect(screen.getByRole('button', { name: zh.settingsSave })).toBeTruthy()
+  })
+
+  it('shows the disabled placeholder and the guidance when the listing resolves no roles', async () => {
+    const { props } = settingsProps({}, [])
+    render(<PromptOptimizerSettings {...props} />)
+    const select = screen.getByLabelText(zh.settingsDefaultRole)
+    await waitFor(() => { expect(select.textContent).toContain(zh.settingsRolesPlaceholder) })
+    expect(screen.getByText(zh.settingsRolesDirGuide)).toBeTruthy()
+    expect(screen.getByRole('option', { name: zh.settingsRolesPlaceholder }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('renders neither the placeholder nor the guidance once roles are listed', async () => {
+    const { props } = settingsProps()
+    render(<PromptOptimizerSettings {...props} />)
+    const select = screen.getByLabelText(zh.settingsDefaultRole)
+    await waitFor(() => { expect(select.textContent).toContain('代码评审员') })
+    expect(select.textContent).not.toContain(zh.settingsRolesPlaceholder)
+    expect(screen.queryByText(zh.settingsRolesDirGuide)).toBeNull()
   })
 })
 
