@@ -73,7 +73,14 @@ function harnessPathsPlugin(): Plugin | undefined {
       for (const [key, target] of entries) {
         if (source !== key && !source.startsWith(`${key}/`)) continue
         const suffix = source === key ? '' : source.slice(key.length)
-        for (const candidate of [target + suffix, target + suffix.replace(/^\/src(?=\/)/u, '')]) {
+        const stripped = suffix.replace(/^\/src(?=\/)/u, '')
+        // Deep `pkg/src/...` subpaths resolve against the package root, which
+        // the paths map sometimes spells as the `src` directory and sometimes
+        // as the `src/index.ts` entry file; try both spellings, then fall
+        // through to default resolution — npm `./src/*` exports legitimately
+        // answer the leftovers.
+        const pkgRoot = target.endsWith('/src/index.ts') ? target.slice(0, -'/src/index.ts'.length) : target
+        for (const candidate of new Set([target + suffix, target + stripped, pkgRoot + suffix, pkgRoot + stripped])) {
           const resolved = await this.resolve(candidate, importer, { ...options, skipSelf: true })
           if (resolved !== null) return resolved
         }
