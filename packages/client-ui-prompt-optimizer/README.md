@@ -13,7 +13,7 @@ Browser UI of the [dsh-prompt-optimizer](https://github.com/ViewWay/dsh-prompt-o
 - **Queue entries**: an inline Optimize action on queued (unsent) conversation items
 - **Settings page**: default role, `rolesDir`-independent defaults, and skill-awareness toggle
 
-All user-visible strings live in `locale/en.json` and `locale/zh.json` — UI changes must update both.
+All user-visible strings live in `src/client/locales.ts` — `zh` is the key source and `en` is type-checked against it, so UI changes must update both dictionaries. `locale/en.json` and `locale/zh.json` carry only the plugin-marketplace metadata (`meta.title` / `meta.description`).
 
 ## Build model
 
