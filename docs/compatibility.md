@@ -8,7 +8,7 @@ This file is the single source of truth for supported harness baselines and pinn
 | --- | --- | --- |
 | `@deepseek-ai/dsh-*` | `0.2.1-rc.2` | npm `next` tag; earlier versions are unverified |
 | `@deepseek-ai/cordis` | `4.0.5` | peer + dev dependency in host and client packages |
-| `zod` | `4.4.3` | pinned — required by lib/types interop, do not upgrade |
+| `zod` | `4.6.7` | pinned; 4.6.x verified against the full gate (lib/types interop holds; `>=4.6.6` fixes GHSA-mrhx-c7xc-m3w5) |
 
 ## Harness feature requirements
 

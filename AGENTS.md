@@ -36,7 +36,7 @@ Run tests scoped while iterating: `pnpm exec vitest run --project node` or `--pr
 - Keep single files under 1000 lines; split when they grow past that.
 - **i18n.** User-visible UI strings live in `packages/client-ui-prompt-optimizer/src/client/locales.ts`: `zh` is the key source and `en` is type-checked against it (`Record<PromptOptimizerKey, string>`). Any UI change updates both dictionaries in the same change; do not hardcode strings in components. `locale/{en,zh}.json` carries only the plugin-marketplace metadata (`meta.title` / `meta.description`).
 - **Compatibility is contractual.** `docs/compatibility.md` is the single source of truth for supported harness baselines and pinned peer dependencies. Bump a baseline only together with that file.
-- **Pinned dependencies.** `zod` stays at `4.4.3` (required by lib/types interop — do not upgrade); harness peer dependencies stay at the documented baseline.
+- **Pinned dependencies.** `zod` stays at `4.6.7` (the 4.4.3 pin is retired — lib/types interop verified against the full gate; `>=4.6.6` required by GHSA-mrhx-c7xc-m3w5); harness peer dependencies stay at the documented baseline.
 - Generated code lives under `packages/api-prompt-optimizer/src/generated/` — do not hand-edit; it is also excluded from lint.
 
 ## Before you finish
