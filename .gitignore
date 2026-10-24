@@ -10,3 +10,4 @@ lib/
 .video_agent/
 .tmp/
 .zcode/
+.pnpm-store/
