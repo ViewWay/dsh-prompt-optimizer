@@ -1,7 +1,7 @@
 {
   "name": "@yimiliya/dsh-api-prompt-optimizer",
   "description": "Typert Remote controller for dsh-prompt-optimizer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -43,12 +43,12 @@
   "peerDependencies": {
     "@yimiliya/dsh-prompt-optimizer": "workspace:*",
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2"
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3"
   },
   "devDependencies": {
     "@yimiliya/dsh-prompt-optimizer": "workspace:*",
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.3",
     "@types/node": "^24"
   }
 }

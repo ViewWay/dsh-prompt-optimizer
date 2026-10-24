@@ -40,7 +40,7 @@ jobs:
       - name: Fetch the dsh harness sources
         run: |
           mkdir -p .tmp
-          git clone --depth 1 --branch dsh-v0.2.1-rc.2 \
+          git clone --depth 1 --branch dsh-v0.2.1-rc.3 \
             https://github.com/deepseek-ai/deepseek-harness.git .tmp/dsh-harness
 
       - name: Install harness dependencies

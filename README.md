@@ -88,7 +88,7 @@ Agents and contributors should read [AGENTS.md](AGENTS.md) for repo conventions.
 
 ## Compatibility
 
-The supported baseline is `@deepseek-ai/dsh-*` `0.2.1-rc.2`; earlier versions are unverified. Details — including the queue-entry slot requirement and the pinned peer dependencies — live in [docs/compatibility.md](docs/compatibility.md), which is the single source of truth.
+The supported baseline is `@deepseek-ai/dsh-*` `0.2.1-rc.3`; earlier versions are unverified. Details — including the queue-entry slot requirement and the pinned peer dependencies — live in [docs/compatibility.md](docs/compatibility.md), which is the single source of truth.
 
 ## Releasing (maintainers)
 

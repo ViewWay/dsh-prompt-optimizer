@@ -48,7 +48,7 @@ You can also install it from the web client's plugin marketplace.
 
 ## Compatibility
 
-Baseline `@deepseek-ai/dsh-*` `0.2.1-rc.2`; earlier versions are unverified. See [docs/compatibility.md](https://github.com/ViewWay/dsh-prompt-optimizer/blob/main/docs/compatibility.md).
+Baseline `@deepseek-ai/dsh-*` `0.2.1-rc.3`; earlier versions are unverified. See [docs/compatibility.md](https://github.com/ViewWay/dsh-prompt-optimizer/blob/main/docs/compatibility.md).
 
 ## License
 

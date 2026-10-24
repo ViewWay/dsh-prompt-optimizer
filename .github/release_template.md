@@ -4,7 +4,7 @@
 
 ## Compatibility / 兼容性
 
-- dsh baseline: `0.2.1-rc.2` (see `docs/compatibility.md`)
+- dsh baseline: `0.2.1-rc.3` (see `docs/compatibility.md`)
 - Packages published: `prompt-optimizer`, `api-prompt-optimizer`, `client-ui-prompt-optimizer`, `bundle` @ vX.Y.Z
 
 ## Install / 安装

@@ -2,7 +2,7 @@
 
 把本插件家族已实现的功能沉淀为可直接投喂给 agent 的任务提示词。用法：在仓库根目录打开一个 agent 会话（dsh / ZCode / Claude Code 等），整段复制下面某个提示词块作为任务输入。每个提示词自包含：背景、目标、约束、验收标准，不依赖会话上下文。
 
-仓库速览（所有提示词共享的事实）：四个包 —— `packages/prompt-optimizer`（Host 服务，核心在 `src/index.ts` / `src/meta-prompt.ts` / `src/skills.ts` / `src/recommend.ts`）、`packages/api-prompt-optimizer`（Typert Remote，`tsc -b` 构建）、`packages/client-ui-prompt-optimizer`（浏览器 UI，`src/client/`，`tools/tsdown.client.ts` 预设出闭包工件）、`packages/bundle`（`cordis.patch.yml` 一键叠加）。版本基线：`@deepseek-ai/dsh-*` `0.2.1-rc.2`、`@deepseek-ai/cordis` `4.0.5`、`zod` 精确 `4.4.3`。门禁：`pnpm run check`（lint + typecheck + build + test；client 测试需 `DSH_HARNESS_ROOT` 指向 harness 检出）。
+仓库速览（所有提示词共享的事实）：四个包 —— `packages/prompt-optimizer`（Host 服务，核心在 `src/index.ts` / `src/meta-prompt.ts` / `src/skills.ts` / `src/recommend.ts`）、`packages/api-prompt-optimizer`（Typert Remote，`tsc -b` 构建）、`packages/client-ui-prompt-optimizer`（浏览器 UI，`src/client/`，`tools/tsdown.client.ts` 预设出闭包工件）、`packages/bundle`（`cordis.patch.yml` 一键叠加）。版本基线：`@deepseek-ai/dsh-*` `0.2.1-rc.3`、`@deepseek-ai/cordis` `4.0.5`、`zod` 精确 `4.6.7`。门禁：`pnpm run check`（lint + typecheck + build + test；client 测试需 `DSH_HARNESS_ROOT` 指向 harness 检出）。
 
 ---
 
@@ -102,7 +102,7 @@
 任务：巩固队列条目入口的宿主兼容层；本次目标是把降级 warn 升级为一次性用户可见提示，避免问题只沉在日志里。
 
 背景：
-- 现状：宿主插槽 conversation.input.dock.queue.item 晚于 0.2.1-rc.2 发布。src/client/mount.ts 里注册包在 try/catch 中，slot 名与注册对象以 as never 降级（旧宿主抛错→catch→ctx.logger.warn，入口静默隐藏）；src/client/QueueItemOptimizeEntry.tsx 的 Props 用本地结构声明（QueueItemEntryItem 等），不依赖未发布插槽的 PropsRuntime 查询；插件对纯文本队列项渲染入口，点击 startQueued(sessionId, itemId, text)，面板顶部仍可换角色重跑。
+- 现状：宿主插槽 conversation.input.dock.queue.item 截至 0.2.1-rc.3 未随任何 npm 版本发布（rc.2 后曾短暂进入 harness 源码树、rc.3 前被移除）。src/client/mount.ts 里注册包在 try/catch 中，slot 名与注册对象以 as never 降级（旧宿主抛错→catch→ctx.logger.warn，入口静默隐藏）；src/client/QueueItemOptimizeEntry.tsx 的 Props 用本地结构声明（QueueItemEntryItem 等），不依赖未发布插槽的 PropsRuntime 查询；插件对纯文本队列项渲染入口，点击 startQueued(sessionId, itemId, text)，面板顶部仍可换角色重跑。
 
 要求：
 1. catch 分支在 logger.warn 之外，用客户端既有提示原语（查 @deepseek-ai/dsh-client-ui-primitives 可用的 toast/notice；若无则保持仅日志并在设置页顶部加一行常驻提示条）告知「当前宿主版本不支持队列条目入口」。
@@ -134,7 +134,7 @@
 任务：把「版本基线升级」从五处手工修改收敛为脚本化检查；本次先实现升级核对器。
 
 背景：
-- 基线 @deepseek-ai/dsh-* 0.2.1-rc.2 分布在多处：docs/compatibility.md（自称为 source of truth）、.github/workflows/ci.yml（clone --branch dsh-v0.2.1-rc.2）、三个 package.json 的 peerDependencies 精确锁定、README 兼容性节。
+- 基线 @deepseek-ai/dsh-* 0.2.1-rc.3 分布在多处：docs/compatibility.md（自称为 source of truth）、.github/workflows/ci.yml（clone --branch dsh-v0.2.1-rc.3）、三个 package.json 的 peerDependencies 精确锁定、README 兼容性节。
 - 发布事实（已实测）：pnpm -r pack 会把 dependencies 与 peerDependencies 里的 workspace:* 改写为真实版本号；release workflow 按 tag 触发、pnpm -r publish --access public --no-git-checks 依 host→api→client→bundle 依赖序发布；未发布前本地安装只能走 tarball（README 安装节已写明）。
 
 要求：

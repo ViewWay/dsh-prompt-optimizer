@@ -39,7 +39,7 @@ Host tests live in `packages/prompt-optimizer/tests/` and run in the `node` vite
 
 ## Compatibility
 
-Baseline `@deepseek-ai/dsh-*` `0.2.1-rc.2`, `@deepseek-ai/cordis` `4.0.5`, `zod` pinned at `4.4.3`. See [docs/compatibility.md](https://github.com/ViewWay/dsh-prompt-optimizer/blob/main/docs/compatibility.md).
+Baseline `@deepseek-ai/dsh-*` `0.2.1-rc.3`, `@deepseek-ai/cordis` `4.0.5`, `zod` pinned at `4.4.3`. See [docs/compatibility.md](https://github.com/ViewWay/dsh-prompt-optimizer/blob/main/docs/compatibility.md).
 
 ## License
 

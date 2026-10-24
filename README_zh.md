@@ -88,7 +88,7 @@ pnpm run build      # tsdown，按依赖顺序
 
 ## 兼容性
 
-支持的基线为 `@deepseek-ai/dsh-*` `0.2.1-rc.2`；更早版本未验证。细节——包括队列入口的插槽要求与锁定的 peer 依赖——见 [docs/compatibility.md](docs/compatibility.md)，该文件是唯一事实来源。
+支持的基线为 `@deepseek-ai/dsh-*` `0.2.1-rc.3`；更早版本未验证。细节——包括队列入口的插槽要求与锁定的 peer 依赖——见 [docs/compatibility.md](docs/compatibility.md)，该文件是唯一事实来源。
 
 ## 发布（维护者）
 

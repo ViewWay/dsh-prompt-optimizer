@@ -252,7 +252,8 @@ function registerUi(ctx: Context): void {
     OptimizeButton,
   ))
   // Best-effort: the per-queue-item entry needs the harness slot
-  // `conversation.input.dock.queue.item`, which shipped after 0.2.1-rc.2.
+  // `conversation.input.dock.queue.item`, which no published harness
+  // release declares up to 0.2.1-rc.3.
   // Hosts that never declared the key make inject() wait silently (spec()
   // stays undefined) while a declared key can only reject inside the register
   // callback; inject() runs either way so a host declaring the slot later

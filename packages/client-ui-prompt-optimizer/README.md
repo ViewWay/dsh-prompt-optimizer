@@ -31,7 +31,7 @@ Client tests resolve `@deepseek-ai/*` modules through a deepseek-harness checkou
 
 ## Compatibility
 
-Baseline `@deepseek-ai/dsh-*` `0.2.1-rc.2`; the queue-entry surface needs the `conversation.input.dock.queue.item` slot. See [docs/compatibility.md](https://github.com/ViewWay/dsh-prompt-optimizer/blob/main/docs/compatibility.md).
+Baseline `@deepseek-ai/dsh-*` `0.2.1-rc.3`; the queue-entry surface needs the `conversation.input.dock.queue.item` slot. See [docs/compatibility.md](https://github.com/ViewWay/dsh-prompt-optimizer/blob/main/docs/compatibility.md).
 
 ## License
 
