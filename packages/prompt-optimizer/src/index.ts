@@ -61,6 +61,7 @@ import type { PromptRoleRef, RoundConditioning } from './meta-prompt.ts'
 import { recommendRoles as rankRoles } from './recommend.ts'
 import { enrichSkillHint, MAX_DETAIL_HINTS, selectSkillHints } from './skills.ts'
 import type { SkillHint } from './skills.ts'
+import { screenVerifyCommand } from './verify-policy.ts'
 
 export type * from './types.ts'
 
@@ -601,6 +602,10 @@ export default class PromptOptimizer extends Service {
     }
     if (command.length > VERIFY_COMMAND_MAX_CHARS) {
       fail('PROMPT_OPTIMIZER_COMMAND_TOO_LONG', `prompt-optimizer: check command exceeds ${VERIFY_COMMAND_MAX_CHARS} characters`)
+    }
+    const verdict = screenVerifyCommand(command)
+    if (!verdict.ok) {
+      fail('PROMPT_OPTIMIZER_COMMAND_BLOCKED', `prompt-optimizer: check command rejected by safety policy: ${verdict.reason}`)
     }
     const shell = this.ctx.get('shell')
     if (shell === undefined) {

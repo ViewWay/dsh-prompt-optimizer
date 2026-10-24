@@ -65,6 +65,9 @@ export default class PromptOptimizerController extends TypertRemoteService {
     } catch (error) {
       signal.throwIfAborted()
       const reason = error instanceof Error ? error.message : String(error)
+      if ((error as { code?: string }).code === 'PROMPT_OPTIMIZER_COMMAND_BLOCKED') {
+        throw new RemoteError('prompt-optimizer/verify-blocked', reason, { reason }, { cause: error })
+      }
       throw new RemoteError('prompt-optimizer/verify-failed', reason, { reason }, { cause: error })
     }
   }

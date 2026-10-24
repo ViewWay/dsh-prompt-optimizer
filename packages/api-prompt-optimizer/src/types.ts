@@ -13,6 +13,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'prompt-optimizer/optimization-failed': { readonly reason: string }
     /** One acceptance-criterion check command failed to run; `reason` names the typed service failure. */
     'prompt-optimizer/verify-failed': { readonly reason: string }
+    /** One acceptance-criterion check command was rejected by the host safety policy; `reason` names the matched deny rule. */
+    'prompt-optimizer/verify-blocked': { readonly reason: string }
     /** One prompt-library operation failed; `reason` names the typed service failure. */
     'prompt-optimizer/library-failed': { readonly reason: string }
     /** Listing the roles directory failed; `reason` names the typed service failure. */
