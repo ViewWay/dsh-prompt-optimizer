@@ -4,6 +4,7 @@ lib/
 .DS_Store
 
 # Local tool / session state
+.dsh-switchman/
 .mimosa/
 .v2c/
 .video_agent/
