@@ -8,7 +8,6 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
-import { join } from 'node:path'
 import { BlockAssembler, createUserMessage, LlmError } from '@deepseek-ai/dsh-llm'
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -744,7 +743,7 @@ export default class PromptOptimizer extends Service {
     if (session === undefined) {
       fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
     }
-    const { fs, rolesDir, entries } = await this.rolesEntries(signal)
+    const { fs, entries } = await this.rolesEntries(signal)
     const entry = ROLE_ID_PATTERN.test(request.role)
       ? entries.find(candidate => candidate.name === `${request.role}.md`)
       : undefined
@@ -789,7 +788,7 @@ export default class PromptOptimizer extends Service {
       if (definition === '' || !definition.startsWith('# ') || definition.length > ROLE_MAX_CHARS) {
         fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_INVALID', 'prompt-optimizer: the rewritten role definition must be non-empty, start with an H1 heading, and stay within the character cap')
       }
-      const backupTarget = await fs.resolve(join(rolesDir, `${request.role}.md.bak`), { signal })
+      const backupTarget = await fs.resolve(`${entry.target}.bak`, { signal })
       await fs.writeText(backupTarget, currentText, undefined, signal)
       await fs.writeText(entry.target, definition, undefined, signal)
     } catch (error) {
@@ -884,13 +883,12 @@ export default class PromptOptimizer extends Service {
   /**
    * Resolve the configured roles directory and its definition-file entries.
    * @param signal - caller cancellation.
-   * @returns the filesystem service, the validated directory path, and every
-   * slug-named `<slug>.md` entry it listed; other files are directory
-   * metadata and never candidates.
+   * @returns the filesystem service and every slug-named `<slug>.md` entry it
+   * listed; other files are directory metadata and never candidates.
    * @throws when `rolesDir` is unset, no filesystem service is composed, the
    * directory cannot be resolved or listed, or it holds too many files.
    */
-  private async rolesEntries(signal: AbortSignal): Promise<{ fs: FileSystem; rolesDir: string; entries: readonly FsDirEntry[] }> {
+  private async rolesEntries(signal: AbortSignal): Promise<{ fs: FileSystem; entries: readonly FsDirEntry[] }> {
     if (this.config.rolesDir === undefined) {
       fail('PROMPT_OPTIMIZER_NO_ROLES_DIR', 'prompt-optimizer: rolesDir is not configured; point it at a directory of role definition files to use role-styled optimization')
     }
@@ -906,7 +904,7 @@ export default class PromptOptimizer extends Service {
       if (entries.length > ROLES_MAX_ENTRIES) {
         fail('PROMPT_OPTIMIZER_ROLES_TOO_MANY', `prompt-optimizer: rolesDir holds ${String(entries.length)} role files, above the ${String(ROLES_MAX_ENTRIES)} cap`)
       }
-      return { fs, rolesDir: this.config.rolesDir, entries }
+      return { fs, entries }
     } catch (error) {
       signal.throwIfAborted()
       if (isTypedFailure(error)) throw error
