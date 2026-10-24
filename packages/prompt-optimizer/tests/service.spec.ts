@@ -150,6 +150,26 @@ describe('PromptOptimizer.optimize', () => {
     expect(llmRequests(session.snapshotEvents()).at(-1)?.previousAttempts).toBe(1)
   })
 
+  it('caps replayed rejected results: five pass, six fail, oversized totals fail', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(envelope('第五次改写', []))
+
+    const five = ['第一次', '第二次', '第三次', '第四次', '第五次']
+    await expect(ctx.promptOptimizer.optimize(
+      { sessionId, text: 'draft', previousAttempts: five }, new AbortController().signal,
+    )).resolves.toMatchObject({ optimizedText: '第五次改写' })
+
+    await expect(ctx.promptOptimizer.optimize(
+      { sessionId, text: 'draft', previousAttempts: [...five, '第六次'] }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_ATTEMPTS_TOO_MANY' })
+
+    const heavy = ['x'.repeat(300), 'x'.repeat(300), 'x'.repeat(300), 'x'.repeat(300), 'x'.repeat(300)]
+    await expect(ctx.promptOptimizer.optimize(
+      { sessionId, text: 'draft', previousAttempts: heavy }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_ATTEMPTS_TOO_MANY' })
+
+    expect(adapter.requests).toHaveLength(1)
+  })
+
   it('prefers the paired explicit route over the session route', async () => {
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())
@@ -605,6 +625,24 @@ describe('PromptOptimizer prompt library', () => {
     await expect(ctx.promptOptimizer.savePrompt(
       { sessionId, title: '   ', text: 'x' }, new AbortController().signal,
     )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_EMPTY_TITLE' })
+  })
+
+  it('caps library text in UTF-8 bytes: at the cap passes, one byte over fails', async () => {
+    const { ctx, table, sessionId } = await withLibrary()
+
+    const atCap = await ctx.promptOptimizer.savePrompt(
+      { sessionId, title: '上限文本', text: 'x'.repeat(64 * 1024) }, new AbortController().signal,
+    )
+    expect(atCap.text).toHaveLength(64 * 1024)
+    expect(table.size).toBe(1)
+
+    await expect(ctx.promptOptimizer.savePrompt(
+      { sessionId, title: '超限文本', text: 'x'.repeat(64 * 1024 + 1) }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_TEXT_TOO_LARGE' })
+    await expect(ctx.promptOptimizer.savePrompt(
+      { sessionId, title: '多字节超限', text: '草'.repeat(64 * 1024 / 3 + 1) }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_TEXT_TOO_LARGE' })
+    expect(table.size).toBe(1)
   })
 })
 

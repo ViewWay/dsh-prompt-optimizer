@@ -168,8 +168,12 @@ const VERIFY_COMMAND_MAX_CHARS = 2000
 const VERIFY_OUTPUT_MAX_CHARS = 4000
 /** Longest library entry title accepted by {@link PromptOptimizer.savePrompt}. */
 const LIBRARY_TITLE_MAX_CHARS = 120
+/** Largest library entry text accepted by {@link PromptOptimizer.savePrompt}, in UTF-8 bytes. */
+const LIBRARY_TEXT_MAX_BYTES = 64 * 1024
 /** Most recent entries {@link PromptOptimizer.listPrompts} returns. */
 const LIBRARY_MAX_ENTRIES = 100
+/** Most rejected earlier results one optimize request may replay. */
+const MAX_PREVIOUS_ATTEMPTS = 5
 /** Slug shape a role id must have before the directory listing is consulted. */
 const ROLE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
 /** Filenames that count as role definitions: `<slug>.md` exactly. */
@@ -510,6 +514,13 @@ export default class PromptOptimizer extends Service {
     }
     const target: PromptOptimizeTarget = rawTarget
     const previousAttempts = [...request.previousAttempts ?? []]
+    if (previousAttempts.length > MAX_PREVIOUS_ATTEMPTS) {
+      fail('PROMPT_OPTIMIZER_ATTEMPTS_TOO_MANY', `prompt-optimizer: at most ${String(MAX_PREVIOUS_ATTEMPTS)} rejected results may be replayed`)
+    }
+    const replayedBytes = previousAttempts.reduce((total, text) => total + Buffer.byteLength(text, 'utf8'), 0)
+    if (replayedBytes > this.config.maxInputBytes) {
+      fail('PROMPT_OPTIMIZER_ATTEMPTS_TOO_MANY', `prompt-optimizer: replayed rejected results total ${String(replayedBytes)} bytes, exceeding maxInputBytes ${String(this.config.maxInputBytes)}`)
+    }
     const requestedRole = request.role ?? this.config.defaultRole
     const role = requestedRole === undefined ? undefined : await this.loadRole(requestedRole, signal)
     const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
@@ -664,6 +675,9 @@ export default class PromptOptimizer extends Service {
     }
     if (request.text.trim() === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_TEXT', 'prompt-optimizer: a library entry needs non-empty text')
+    }
+    if (Buffer.byteLength(request.text, 'utf8') > LIBRARY_TEXT_MAX_BYTES) {
+      fail('PROMPT_OPTIMIZER_TEXT_TOO_LARGE', `prompt-optimizer: library text exceeds ${String(LIBRARY_TEXT_MAX_BYTES)} bytes`)
     }
     const entry: PromptLibraryEntry = {
       id: randomUUID(),
