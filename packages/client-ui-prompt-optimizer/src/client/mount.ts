@@ -227,16 +227,17 @@ function registerUi(ctx: Context): void {
     },
     verifyCheck: async (sessionId: SessionId, criterion: string, command: string): Promise<PromptVerifyResult> => {
       const result = await ctx.remote.promptOptimizer.verify({ sessionId, criterion, command }, new AbortController().signal)
-      if (!result.ok) throw new Error(result.error.message)
+      // The rebuilt RemoteError keeps the stable code the panel branches on (verify-blocked).
+      if (!result.ok) throw result.error
       return result.value
     },
     saveToLibrary: async (sessionId: SessionId, title: string, text: string): Promise<void> => {
       const result = await ctx.remote.promptOptimizer.savePrompt({ sessionId, title, text }, new AbortController().signal)
       if (!result.ok) throw new Error(result.error.message)
     },
-    evolveRole: async (sessionId: SessionId, role: string, draft: string, optimized: string): Promise<PromptRoleEvolveResult> => {
+    evolveRole: async (sessionId: SessionId, role: string, draft: string, optimized: string, confirm?: boolean): Promise<PromptRoleEvolveResult> => {
       const result = await ctx.remote.promptOptimizer.evolveRole(
-        { sessionId, role, draft, optimized }, new AbortController().signal,
+        { sessionId, role, draft, optimized, ...(confirm === true ? { confirm: true } : {}) }, new AbortController().signal,
       )
       if (!result.ok) throw new Error(result.error.message)
       return result.value

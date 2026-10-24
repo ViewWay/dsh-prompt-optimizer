@@ -384,6 +384,47 @@ describe('PreviewPanel', () => {
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe(zh.evolveRoleFailed) })
   })
 
+  it('stages the rewritten definition for review instead of writing on the first call', async () => {
+    const definition = '# 代码评审员\n待确认的新定义'
+    const evolveRole = vi.fn(async () => ({ role: 'imp-code-reviewer', name: '资深代码评审员', bytes: 420, pendingDefinition: definition }))
+    render(<PreviewPanel {...panelProps({ ...READY, role: 'imp-code-reviewer' }, { evolveRole })} />)
+    fireEvent.click(screen.getByRole('button', { name: zh.evolveRole }))
+    await waitFor(() => { expect(screen.getByTestId('evolve-review-definition').textContent).toBe(definition) })
+    expect(evolveRole).toHaveBeenCalledExactlyOnceWith(SESSION, 'imp-code-reviewer', '原始草稿', '优化后的提示词')
+    expect(screen.queryByTestId('evolve-role-done')).toBeNull()
+    expect(screen.getByRole('button', { name: zh.evolveConfirm })).toBeTruthy()
+    expect(screen.getByRole('button', { name: zh.evolveDiscard })).toBeTruthy()
+    expect(screen.getByRole('button', { name: zh.evolveRole }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('writes only when the review is confirmed by a second confirm call', async () => {
+    const definition = '# 代码评审员\n待确认的新定义'
+    const evolveRole = vi.fn(async (...args: unknown[]) => args[4] === true
+      ? { role: 'imp-code-reviewer', name: '资深代码评审员', bytes: 420 }
+      : { role: 'imp-code-reviewer', name: '资深代码评审员', bytes: 420, pendingDefinition: definition })
+    render(<PreviewPanel {...panelProps({ ...READY, role: 'imp-code-reviewer' }, { evolveRole })} />)
+    fireEvent.click(screen.getByRole('button', { name: zh.evolveRole }))
+    await waitFor(() => { expect(screen.getByTestId('evolve-review-definition').textContent).toBe(definition) })
+    fireEvent.click(screen.getByRole('button', { name: zh.evolveConfirm }))
+    await waitFor(() => { expect(screen.getByTestId('evolve-role-done').textContent).toBe('已更新角色：资深代码评审员') })
+    expect(evolveRole).toHaveBeenCalledTimes(2)
+    expect(evolveRole).toHaveBeenNthCalledWith(2, SESSION, 'imp-code-reviewer', '原始草稿', '优化后的提示词', true)
+    expect(screen.queryByTestId('evolve-review')).toBeNull()
+  })
+
+  it('discards the staged review without a confirm call', async () => {
+    const definition = '# 代码评审员\n待确认的新定义'
+    const evolveRole = vi.fn(async () => ({ role: 'imp-code-reviewer', name: '资深代码评审员', bytes: 420, pendingDefinition: definition }))
+    render(<PreviewPanel {...panelProps({ ...READY, role: 'imp-code-reviewer' }, { evolveRole })} />)
+    fireEvent.click(screen.getByRole('button', { name: zh.evolveRole }))
+    await waitFor(() => { expect(screen.getByTestId('evolve-review-definition').textContent).toBe(definition) })
+    fireEvent.click(screen.getByRole('button', { name: zh.evolveDiscard }))
+    expect(screen.queryByTestId('evolve-review')).toBeNull()
+    expect(evolveRole).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('evolve-role-done')).toBeNull()
+    expect(screen.getByRole('button', { name: zh.evolveRole }).hasAttribute('disabled')).toBe(false)
+  })
+
   it('offers the header role picker and re-runs the round on change', async () => {
     const regenerateAsRole = vi.fn()
     const loadRoles = vi.fn(async () => [
@@ -632,5 +673,20 @@ describe('PreviewPanel', () => {
     render(<PreviewPanel {...panelProps(READY, { verifyCheck })} />)
     screen.getByRole('button', { name: zh.runCheck }).click()
     await waitFor(() => { expect(screen.getByTestId('criterion-check-result').textContent).toBe(zh.checkFailed) })
+  })
+
+  it('surfaces the safety-policy block as an alert while the command stays visible', async () => {
+    const verifyCheck = vi.fn(async () => {
+      throw Object.assign(
+        new Error('prompt-optimizer: check command rejected by safety policy: network egress'),
+        { code: 'prompt-optimizer/verify-blocked' },
+      )
+    })
+    render(<PreviewPanel {...panelProps(READY, { verifyCheck })} />)
+    expect(screen.getByTestId('criterion-check-command').textContent).toBe('ls script.sh')
+    screen.getByRole('button', { name: zh.runCheck }).click()
+    await waitFor(() => { expect(screen.getByTestId('criterion-check-blocked').textContent).toBe(zh.checkBlocked) })
+    expect(screen.getByRole('alert').textContent).toBe(zh.checkBlocked)
+    expect(screen.getByTestId('criterion-check').textContent).toContain('network egress')
   })
 })

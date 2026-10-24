@@ -139,6 +139,18 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+.checkCommand {
+  flex-basis: 100%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .passed {
   font-size: 12px;
   color: var(--dsw-alias-state-success-primary);

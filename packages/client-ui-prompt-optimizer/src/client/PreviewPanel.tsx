@@ -29,12 +29,20 @@ export interface PreviewPanelActions {
   verifyCheck: (sessionId: PromptOptimizationPreview['sessionId'], criterion: string, command: string) => Promise<PromptVerifyResult>
   /** Save the accepted result into the durable prompt library. */
   saveToLibrary: (sessionId: PromptOptimizationPreview['sessionId'], title: string, text: string) => Promise<void>
-  /** Rewrite the round's role definition from the round's materials; resolves to the new role summary fields. */
+  /** Rewrite the round's role definition from the round's materials; without confirm it only
+   * stages a preview (result.pendingDefinition) and writes nothing, with confirm it commits.
+   * @param sessionId - Session whose preview is open.
+   * @param role - role slug whose definition the round styled and the rewrite targets.
+   * @param draft - complete draft text the round optimized.
+   * @param optimized - complete optimized text the round produced.
+   * @param confirm - true commits the staged preview; absent requests a preview only.
+   */
   evolveRole: (
     sessionId: PromptOptimizationPreview['sessionId'],
     role: string,
     draft: string,
     optimized: string,
+    confirm?: boolean,
   ) => Promise<PromptRoleEvolveResult>
 }
 
@@ -91,9 +99,11 @@ interface CheckState {
   readonly running: boolean
   readonly result: PromptVerifyResult | undefined
   readonly error: string | undefined
+  /** True when the host safety policy refused the command (remote code `prompt-optimizer/verify-blocked`). */
+  readonly blocked: boolean
 }
 
-const CHECK_IDLE: CheckState = { values: {}, running: false, result: undefined, error: undefined }
+const CHECK_IDLE: CheckState = { values: {}, running: false, result: undefined, error: undefined, blocked: false }
 
 /** Library-button view state. */
 interface LibraryState {
@@ -104,14 +114,15 @@ interface LibraryState {
 
 const LIBRARY_IDLE: LibraryState = { saving: false, saved: false, error: undefined }
 
-/** Role-evolution button view state. */
+/** Role-evolution button view state; `pending` holds the staged definition awaiting review. */
 interface EvolutionState {
   readonly running: boolean
   readonly doneName: string | undefined
   readonly error: string | undefined
+  readonly pending: string | undefined
 }
 
-const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, error: undefined }
+const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, error: undefined, pending: undefined }
 
 /** Render one Session's optimization preview in the composer seat. */
 export function PreviewPanel(props: PreviewPanelProps) {
@@ -129,14 +140,15 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
   const runCheck = (criterion: string, template: string): void => {
     const current = checks[criterion] ?? CHECK_IDLE
-    setChecks(draft => ({ ...draft, [criterion]: { ...current, running: true, error: undefined } }))
+    setChecks(draft => ({ ...draft, [criterion]: { ...current, running: true, error: undefined, blocked: false } }))
     void (async () => {
       try {
         const result = await verifyCheck(matched.sessionId, criterion, fillPlaceholders(template, current.values))
-        setChecks(draft => ({ ...draft, [criterion]: { values: current.values, running: false, result, error: undefined } }))
+        setChecks(draft => ({ ...draft, [criterion]: { values: current.values, running: false, result, error: undefined, blocked: false } }))
       } catch (failure) {
         const message = failure instanceof Error ? failure.message : String(failure)
-        setChecks(draft => ({ ...draft, [criterion]: { values: current.values, running: false, result: undefined, error: message } }))
+        const blocked = (failure as { code?: string }).code === 'prompt-optimizer/verify-blocked'
+        setChecks(draft => ({ ...draft, [criterion]: { values: current.values, running: false, result: undefined, error: message, blocked } }))
       }
     })()
   }
@@ -171,18 +183,45 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const evolve = (): void => {
     const role = state.role
     const result = state.result
-    if (role === undefined || result === undefined || evolution.running) return
-    setEvolution({ running: true, doneName: undefined, error: undefined })
+    if (role === undefined || result === undefined || evolution.running || evolution.pending !== undefined) return
+    setEvolution({ running: true, doneName: undefined, error: undefined, pending: undefined })
     void (async () => {
       try {
         const evolved = await evolveRole(matched.sessionId, role, state.draft, result.optimizedText)
-        setEvolution({ running: false, doneName: evolved.name, error: undefined })
+        if (evolved.pendingDefinition !== undefined) {
+          setEvolution({ running: false, doneName: undefined, error: undefined, pending: evolved.pendingDefinition })
+          return
+        }
+        setEvolution({ running: false, doneName: evolved.name, error: undefined, pending: undefined })
         setRolesRevision(revision => revision + 1)
       } catch (failure) {
         const message = failure instanceof Error ? failure.message : String(failure)
-        setEvolution({ running: false, doneName: undefined, error: message })
+        setEvolution({ running: false, doneName: undefined, error: message, pending: undefined })
       }
     })()
+  }
+
+  const evolveConfirm = (): void => {
+    const role = state.role
+    const result = state.result
+    if (role === undefined || result === undefined || evolution.running || evolution.pending === undefined) return
+    setEvolution(draft => ({ ...draft, running: true, error: undefined }))
+    void (async () => {
+      try {
+        const evolved = await evolveRole(matched.sessionId, role, state.draft, result.optimizedText, true)
+        setEvolution({ running: false, doneName: evolved.name, error: undefined, pending: undefined })
+        setRolesRevision(revision => revision + 1)
+      } catch (failure) {
+        const message = failure instanceof Error ? failure.message : String(failure)
+        // Keep the staged text: the failure may be transient and the review must stay readable.
+        setEvolution(draft => ({ ...draft, running: false, error: message }))
+      }
+    })()
+  }
+
+  const evolveDiscard = (): void => {
+    if (evolution.running) return
+    setEvolution(EVOLUTION_IDLE)
   }
 
   return (
@@ -211,7 +250,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             ? <>
               <Button
                 size="sm" type="button"
-                disabled={!ready || evolution.running}
+                disabled={!ready || evolution.running || evolution.pending !== undefined}
                 onClick={() => { evolve() }}
                 data-testid="evolve-role"
               >
@@ -277,6 +316,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
                   </span>
                   {check !== undefined
                     ? <div className={css.checkRow} data-testid="criterion-check">
+                      <code className={css.checkCommand} data-testid="criterion-check-command">
+                        {fillPlaceholders(template, check.values)}
+                      </code>
                       {names.map(name => (
                         <input
                           key={name} className={css.checkInput} aria-label={name} placeholder={name}
@@ -289,6 +331,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
                                 running: false,
                                 result: undefined,
                                 error: undefined,
+                                blocked: false,
                               },
                             }))
                           }}
@@ -308,6 +351,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
                           {check.result.passed ? t('checkPassed') : t('checkFailed')}
                         </span>
                         : null}
+                      {check.blocked
+                        ? <span className={css.failed} role="alert" data-testid="criterion-check-blocked">{t('checkBlocked')}</span>
+                        : null}
                       {check.error !== undefined ? <span className={css.failed}>{check.error}</span> : null}
                       {check.result !== undefined
                         ? <pre className={css.checkOutput} data-testid="criterion-check-output">{check.result.output}</pre>
@@ -318,6 +364,26 @@ export function PreviewPanel(props: PreviewPanelProps) {
               )
             })}
           </ul>
+          : null}
+        {evolution.pending !== undefined
+          ? <div className={css.critique} data-testid="evolve-review">
+            <span className={css.columnTitle}>{t('evolvePreviewTitle')}</span>
+            <pre className={css.checkOutput} data-testid="evolve-review-definition">{evolution.pending}</pre>
+            <div className={css.critiqueActions}>
+              <Button
+                size="sm" type="button" disabled={evolution.running}
+                onClick={() => { evolveConfirm() }} data-testid="evolve-confirm"
+              >
+                {t('evolveConfirm')}
+              </Button>
+              <Button
+                size="sm" type="button" disabled={evolution.running}
+                onClick={() => { evolveDiscard() }} data-testid="evolve-discard"
+              >
+                {t('evolveDiscard')}
+              </Button>
+            </div>
+          </div>
           : null}
         {ready && state.result.changes.length === 0
           ? <p className={css.noChanges}>{t('emptyChanges')}</p>
