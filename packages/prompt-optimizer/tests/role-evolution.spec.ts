@@ -3,13 +3,22 @@ import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { pluginRecordOf, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import PromptOptimizer from '../src/index.ts'
-import type { Config } from '../src/index.ts'
+import type { Config, PromptOptimizerRoleEvolvedEventData } from '../src/index.ts'
 
 const CONFIG: Config = {
   maxInputBytes: 1_000, maxOutputTokens: 64, timeoutMs: 1_000, verifyTimeoutMs: 2_000,
   domainPriors: true, skillAware: false,
+}
+
+/** Committed role-evolution record payloads in `events`, oldest first. */
+function roleEvolvedRecords(events: readonly SessionEvent[]): PromptOptimizerRoleEvolvedEventData[] {
+  return events.flatMap(event => {
+    const record = pluginRecordOf(event)
+    return record?.type === 'plugin:prompt-optimizer/role-evolved' ? [record.data as PromptOptimizerRoleEvolvedEventData] : []
+  })
 }
 
 const REVIEWER_TEXT = '# 代码评审员（Code Reviewer）\n\n## 角色设定\n你是一名代码评审员，负责审查代码变更。\n'
@@ -139,10 +148,9 @@ describe('PromptOptimizer.evolveRole', () => {
     })
     expect(written.get('/roles/imp-code-reviewer.md.bak')).toBe(REVIEWER_TEXT)
     expect(written.get('/roles/imp-code-reviewer.md')).toBe(EVOLVED_DEFINITION)
-    const events = ctx.sessions.get(sessionId)!.snapshotEvents()
-      .filter(event => event.type === 'prompt-optimizer/role-evolved')
+    const events = roleEvolvedRecords(ctx.sessions.get(sessionId)!.snapshotEvents())
     expect(events).toHaveLength(1)
-    expect(events[0]?.data).toEqual({ role: 'imp-code-reviewer', bytes: result.bytes })
+    expect(events[0]).toEqual({ role: 'imp-code-reviewer', bytes: result.bytes })
     expect(adapter.requests[0]?.system).toContain('role definition maintainer')
     const material = adapter.requests[0]?.messages[0]?.content[0]
     expect(material?.type === 'text' && material.text).toContain('你是一名代码评审员，负责审查代码变更。')
@@ -167,7 +175,6 @@ describe('PromptOptimizer.evolveRole', () => {
       { sessionId, role: 'imp-code-reviewer', draft: '草稿', optimized: '结果' }, new AbortController().signal,
     )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_ROLE_EVOLVE_INVALID' })
     expect(written.size).toBe(0)
-    expect(ctx.sessions.get(sessionId)!.snapshotEvents()
-      .some(event => event.type === 'prompt-optimizer/role-evolved')).toBe(false)
+    expect(roleEvolvedRecords(ctx.sessions.get(sessionId)!.snapshotEvents())).toHaveLength(0)
   })
 })

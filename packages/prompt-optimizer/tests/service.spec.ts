@@ -4,10 +4,11 @@ import { describe, expect, it, onTestFinished } from 'vitest'
 import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { pluginRecordOf, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import PromptOptimizer from '../src/index.ts'
 import { OPTIMIZED_MARKER, CHANGES_MARKER, AC_MARKER } from '../src/meta-prompt.ts'
-import type { Config } from '../src/index.ts'
+import type { Config, PromptOptimizerLlmRequestEventData, PromptOptimizerVerifyEventData } from '../src/index.ts'
 
 class RecordingAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
@@ -33,6 +34,22 @@ class RecordingAdapter extends LlmAdapter {
 const CONFIG: Config = {
   maxInputBytes: 1_000, maxOutputTokens: 64, timeoutMs: 1_000, verifyTimeoutMs: 2_000,
   domainPriors: true, skillAware: false,
+}
+
+/** Committed optimizer LLM-request record payloads in `events`, oldest first. */
+function llmRequests(events: readonly SessionEvent[]): PromptOptimizerLlmRequestEventData[] {
+  return events.flatMap(event => {
+    const record = pluginRecordOf(event)
+    return record?.type === 'plugin:prompt-optimizer/llm-request' ? [record.data as PromptOptimizerLlmRequestEventData] : []
+  })
+}
+
+/** Committed verify record payloads in `events`, oldest first. */
+function verifyRecords(events: readonly SessionEvent[]): PromptOptimizerVerifyEventData[] {
+  return events.flatMap(event => {
+    const record = pluginRecordOf(event)
+    return record?.type === 'plugin:prompt-optimizer/verify' ? [record.data as PromptOptimizerVerifyEventData] : []
+  })
 }
 
 function envelope(optimized: string, changes: readonly string[]): StreamChunk[] {
@@ -79,8 +96,7 @@ describe('PromptOptimizer.optimize', () => {
       reason: 'initial',
     })
     const adapter = new RecordingAdapter(envelope('优化后的提示词', ['补充了输出格式']), () => {
-      requestWasLoggedAtDispatch = session.snapshotEvents()
-        .some(event => event.type === 'prompt-optimizer/llm-request')
+      requestWasLoggedAtDispatch = llmRequests(session.snapshotEvents()).length > 0
     })
     ctx.llm.registerAdapter(['current-route'], adapter)
     await ctx.plugin(PromptOptimizer, CONFIG)
@@ -110,8 +126,7 @@ describe('PromptOptimizer.optimize', () => {
       sessionId: session.id,
     })
     expect(typeof options.system).toBe('string')
-    const logged = session.snapshotEvents()
-      .findLast(event => event.type === 'prompt-optimizer/llm-request')?.data
+    const logged = llmRequests(session.snapshotEvents()).at(-1)
     expect(logged).toMatchObject({
       route: { provider: 'current-route', model: 'current-model' },
       maxTokens: 64,
@@ -132,8 +147,7 @@ describe('PromptOptimizer.optimize', () => {
 
     const input = adapter.requests[0]?.messages[0]?.content[0]
     expect(input?.type === 'text' && input.text).toContain('第一次改写')
-    expect(session.snapshotEvents()
-      .findLast(event => event.type === 'prompt-optimizer/llm-request')?.data.previousAttempts).toBe(1)
+    expect(llmRequests(session.snapshotEvents()).at(-1)?.previousAttempts).toBe(1)
   })
 
   it('prefers the paired explicit route over the session route', async () => {
@@ -180,7 +194,7 @@ describe('PromptOptimizer.optimize', () => {
     )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_INPUT_TOO_LARGE' })
 
     expect(adapter.requests).toHaveLength(0)
-    expect(session.snapshotEvents().some(event => event.type === 'prompt-optimizer/llm-request')).toBe(false)
+    expect(llmRequests(session.snapshotEvents())).toHaveLength(0)
   })
 
   it('rejects a session without any logged route when no default model exists', async () => {
@@ -280,7 +294,7 @@ describe('PromptOptimizer.optimize', () => {
     await expect(ctx.promptOptimizer.optimize(
       { sessionId: session.id, text: 'draft' }, new AbortController().signal,
     )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_ADAPTER' })
-    expect(session.snapshotEvents().some(event => event.type === 'prompt-optimizer/llm-request')).toBe(false)
+    expect(llmRequests(session.snapshotEvents())).toHaveLength(0)
   })
 
   it.each([
@@ -292,8 +306,7 @@ describe('PromptOptimizer.optimize', () => {
     await expect(ctx.promptOptimizer.optimize(
       { sessionId, text: 'draft' }, new AbortController().signal,
     )).rejects.toMatchObject({ message, code })
-    expect(ctx.sessions.get(sessionId)!.snapshotEvents()
-      .some(event => event.type === 'prompt-optimizer/llm-request')).toBe(true)
+    expect(llmRequests(ctx.sessions.get(sessionId)!.snapshotEvents()).length).toBeGreaterThan(0)
   })
 
   it('rejects an empty rewrite with a typed error', async () => {
@@ -381,10 +394,9 @@ describe('PromptOptimizer.optimize target modes', () => {
     expect(adapter.requests).toHaveLength(1)
     expect(result.optimizedText).toBe('重写草稿')
     expect(result.critique).toBeUndefined()
-    const events = ctx.sessions.get(sessionId)!.snapshotEvents()
-      .filter(event => event.type === 'prompt-optimizer/llm-request')
+    const events = llmRequests(ctx.sessions.get(sessionId)!.snapshotEvents())
     expect(events).toHaveLength(1)
-    expect(events[0]?.data).toMatchObject({ target: 'draft', round: 1 })
+    expect(events[0]).toMatchObject({ target: 'draft', round: 1 })
   })
 
   it('runs rewrite plus critique rounds for a system target and merges the revisions', async () => {
@@ -404,11 +416,10 @@ describe('PromptOptimizer.optimize target modes', () => {
     expect(result.optimizedText).toBe('修订版系统提示')
     expect(result.changes).toEqual(['拆分了角色小节'])
     expect(result.critique).toEqual(['消除了模糊表述', '删除了任务专属内容'])
-    const events = ctx.sessions.get(sessionId)!.snapshotEvents()
-      .filter(event => event.type === 'prompt-optimizer/llm-request')
+    const events = llmRequests(ctx.sessions.get(sessionId)!.snapshotEvents())
     expect(events).toHaveLength(2)
-    expect(events[0]?.data).toMatchObject({ target: 'system', round: 1 })
-    expect(events[1]?.data).toMatchObject({ target: 'system', round: 2 })
+    expect(events[0]).toMatchObject({ target: 'system', round: 1 })
+    expect(events[1]).toMatchObject({ target: 'system', round: 2 })
   })
 
   it('rejects an unknown target', async () => {
@@ -467,10 +478,9 @@ describe('PromptOptimizer.verify', () => {
     expect(result.output).toContain('$ ls script.sh')
     expect(result.output).toContain('ok')
     expect(shell.captured[0]).toMatchObject({ command: 'ls script.sh', workdir: '/tmp/workspace' })
-    const events = ctx.sessions.get(sessionId)!.snapshotEvents()
-      .filter(event => event.type === 'prompt-optimizer/verify')
+    const events = verifyRecords(ctx.sessions.get(sessionId)!.snapshotEvents())
     expect(events).toHaveLength(1)
-    expect(events[0]?.data).toMatchObject({ criterion: '脚本存在', command: 'ls script.sh', passed: true })
+    expect(events[0]).toMatchObject({ criterion: '脚本存在', command: 'ls script.sh', passed: true })
   })
 
   it('resolves a nonzero exit as a failed check instead of throwing', async () => {
@@ -648,8 +658,7 @@ describe('PromptOptimizer role styling', () => {
     expect(system).toContain('Professional role for this round: 代码评审员 (imp-code-reviewer)')
     expect(system).toContain('--- role definition start ---')
     expect(system).toContain('你是一名代码评审员，负责审查代码变更。')
-    const logged = ctx.sessions.get(sessionId)!.snapshotEvents()
-      .findLast(event => event.type === 'prompt-optimizer/llm-request')?.data
+    const logged = llmRequests(ctx.sessions.get(sessionId)!.snapshotEvents()).at(-1)
     expect(logged).toMatchObject({ role: 'imp-code-reviewer', round: 1 })
   })
 
@@ -866,8 +875,7 @@ describe('skill-aware optimization', () => {
     expect(system).toContain('never invent parameters')
     expect(system).toContain('    Run lint, typecheck, build, and tests in order; report each result.')
     const session = ctx.sessions.get(sessionId)
-    const logged = session?.snapshotEvents()
-      .findLast(event => event.type === 'prompt-optimizer/llm-request')?.data
+    const logged = llmRequests(session?.snapshotEvents() ?? []).at(-1)
     expect(logged).toMatchObject({ skillsHinted: 1 })
   })
 
@@ -885,8 +893,7 @@ describe('skill-aware optimization', () => {
 
     expect(adapter.requests[0]!.system).not.toContain('Installed skills')
     const session = ctx.sessions.get(sessionId)
-    const logged = session?.snapshotEvents()
-      .findLast(event => event.type === 'prompt-optimizer/llm-request')?.data
+    const logged = llmRequests(session?.snapshotEvents() ?? []).at(-1)
     expect(logged).toMatchObject({ skillsHinted: 0 })
   })
 
@@ -914,8 +921,7 @@ describe('output language', () => {
     expect(system).toContain('one short bullet in 中文, at most 6 bullets.')
     expect(system).not.toContain("the draft's language")
     const session = ctx.sessions.get(sessionId)
-    const logged = session?.snapshotEvents()
-      .findLast(event => event.type === 'prompt-optimizer/llm-request')?.data
+    const logged = llmRequests(session?.snapshotEvents() ?? []).at(-1)
     expect(logged).toMatchObject({ language: '中文' })
   })
 
@@ -926,8 +932,7 @@ describe('output language', () => {
 
     expect(adapter.requests[0]!.system).toContain("1. Keep the draft's language.")
     const session = ctx.sessions.get(sessionId)
-    const logged = session?.snapshotEvents()
-      .findLast(event => event.type === 'prompt-optimizer/llm-request')?.data
+    const logged = llmRequests(session?.snapshotEvents() ?? []).at(-1)
     expect(logged).not.toHaveProperty('language')
   })
 

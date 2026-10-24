@@ -20,7 +20,7 @@
 要求：
 1. 启用插件后重启桌面端，逐项冒烟：输入框「优化」按钮、预览面板（原始/优化对照、变更说明、验收准则）、mechanical 准则「运行核验」按钮、队列条目行内入口、设置页默认角色下拉。
 2. 验证产出语言跟随界面语言（中文界面出中文提示词，切 English 后出英文）。
-3. 结果检查以会话日志为准：dev home 下 sessions/<workspace>/session-*/session.v4.jsonl.zstd，解包后应有 prompt-optimizer/llm-request 与（若点了核验）prompt-optimizer/verify 事件，且全程无 error 事件。
+3. 结果检查以会话日志为准：dev home 下 sessions/<workspace>/session-*/session.v4.jsonl.zstd，解包后应有 plugin:prompt-optimizer/llm-request 与（若点了核验）plugin:prompt-optimizer/verify 记录（均为 ignorable 插件记录，宿主无需识别其类型），且全程无 error 事件。
 
 约束：不改 harness 源码；只改 dev home 的 profile patch（可随时删掉追加块回滚）。
 验收标准：上述每项入口在桌面窗口可见可用；会话日志含优化事件且零错误；退出重启后插件仍然生效。

@@ -1,6 +1,7 @@
 /**
  * Experimental draft-prompt optimization: one meta-prompted LLM rewrite per
- * request, logged as `prompt-optimizer/llm-request` before dispatch. The
+ * request, logged as an ignorable `plugin:prompt-optimizer/llm-request`
+ * record before dispatch. The
  * service never touches the loop; the Remote consumer owns the draft.
  * @module @yimiliya/dsh-prompt-optimizer
  */
@@ -19,6 +20,7 @@ import type { ContentBlock, FinishReason, GenerateOptions, Message, TokenUsage }
 import { deadline, MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { appendPluginRecord } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
@@ -63,13 +65,16 @@ import type { SkillHint } from './skills.ts'
 export type * from './types.ts'
 
 declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
+  // Plugin records, not SessionEventMap events: a host that does not share
+  // this package's compiled-in types refuses the whole session log on any
+  // unknown required event type; ignorable `plugin:` records always load.
+  interface PluginRecordMap {
     /** Log-only pre-dispatch record of one draft-optimization model request. */
-    'prompt-optimizer/llm-request': PromptOptimizerLlmRequestEventData
+    'plugin:prompt-optimizer/llm-request': PromptOptimizerLlmRequestEventData
     /** Log-only record of one executed acceptance-criterion check command. */
-    'prompt-optimizer/verify': PromptOptimizerVerifyEventData
+    'plugin:prompt-optimizer/verify': PromptOptimizerVerifyEventData
     /** Log-only record of one completed role-definition evolution. */
-    'prompt-optimizer/role-evolved': PromptOptimizerRoleEvolvedEventData
+    'plugin:prompt-optimizer/role-evolved': PromptOptimizerRoleEvolvedEventData
   }
 }
 
@@ -451,7 +456,7 @@ export default class PromptOptimizer extends Service {
       sessionId: options.sessionId,
       signal: callDeadline.signal,
     }
-    session.append('prompt-optimizer/llm-request', {
+    appendPluginRecord(session, 'plugin:prompt-optimizer/llm-request', {
       route: options.route,
       system: options.system,
       messages,
@@ -632,7 +637,7 @@ export default class PromptOptimizer extends Service {
       output,
       durationMs: Date.now() - started,
     }
-    session.append('prompt-optimizer/verify', { criterion: request.criterion, command, ...verified })
+    appendPluginRecord(session, 'plugin:prompt-optimizer/verify', { criterion: request.criterion, command, ...verified })
     return verified
   }
 
@@ -797,7 +802,7 @@ export default class PromptOptimizer extends Service {
       fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_FAILED', `prompt-optimizer: evolving role "${request.role}" failed: ${error instanceof Error ? error.message : String(error)}`)
     }
     const bytes = Buffer.byteLength(definition, 'utf8')
-    session.append('prompt-optimizer/role-evolved', { role: request.role, bytes })
+    appendPluginRecord(session, 'plugin:prompt-optimizer/role-evolved', { role: request.role, bytes })
     return { role: request.role, name: roleNameOf(definition) ?? request.role, bytes }
   }
 
