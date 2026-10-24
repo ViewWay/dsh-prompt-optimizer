@@ -3,6 +3,9 @@ lib/
 *.tsbuildinfo
 .DS_Store
 
+# Local packed tarballs for file: installs into dsh profiles
+/*.tgz
+
 # Local tool / session state
 .dsh-switchman/
 .mimosa/
