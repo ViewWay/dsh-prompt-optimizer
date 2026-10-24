@@ -54,6 +54,16 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 | `defaultRole` | 未设置 | 未显式指定角色时使用的默认角色 slug；配置页也可设置 |
 | `skillAware` | `true` | 把命中的已安装技能并入元提示词 |
 
+## 隐私
+
+优化过程会记录进会话自身的事件日志，请据此对待草稿内容：
+
+- 每一轮优化都会向会话追加一条 `plugin:prompt-optimizer/llm-request` 记录，包含完整草稿文本与辅助 system prompt。
+- 每次运行核验都会追加一条 `plugin:prompt-optimizer/verify` 记录，包含所执行的命令与其（已脱敏的）输出。
+- 「改进此角色」会重写所配置 `rolesDir` 下的角色定义文件 `<slug>.md`；旧版本保留在同目录的 `<slug>.md.bak`。
+
+向草稿中粘贴密钥等敏感内容时，应预期它们出现在会话日志里。
+
 ## 开发
 
 ```sh

@@ -54,6 +54,16 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 | `defaultRole` | unset | Default role slug when none is specified; also settable in the settings page |
 | `skillAware` | `true` | Fold matched installed skills into the meta-prompt |
 
+## Privacy
+
+Optimization runs are recorded in the session's own event log; treat drafts accordingly:
+
+- Every optimization round appends a `plugin:prompt-optimizer/llm-request` record containing the full draft text and the auxiliary system prompt.
+- Every check run appends a `plugin:prompt-optimizer/verify` record containing the executed command and its (redacted) output.
+- "Improve this role" rewrites the role definition file `<slug>.md` under the configured `rolesDir` on disk; the previous version is kept alongside it as `<slug>.md.bak`.
+
+If you paste secrets into a draft, expect them to appear in the session log.
+
 ## Development
 
 ```sh
