@@ -36,10 +36,11 @@ dsh plugin --profile web add @yimiliya/dsh-prompt-optimizer-bundle
 
 The bundle stacks `prompt-optimizer`, `api-prompt-optimizer` and `ui-prompt-optimizer` into that profile's `dsh.profile.bundles`. You can also install it from the web client's plugin marketplace.
 
-Before publishing, install from a local path or git (pnpm resolves `workspace:*` to the matching versions):
+Before any release exists, install from tarballs. A raw local path or git spec does **not** work: the bundle's `workspace:*` dependencies resolve only inside this repository's pnpm workspace, while `dsh plugin add` installs inside the profile's own root. Packing rewrites those ranges to real versions (`pnpm -r pack`), and the tarball's dependencies then resolve from the registry — so this path needs the other three packages published first:
 
 ```sh
-dsh plugin --profile web add /path/to/dsh-prompt-optimizer/packages/bundle
+pnpm -r pack        # writes *.tgz next to each package.json
+dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundle-<version>.tgz
 ```
 
 ### Configuration (optional — `plugins > config > prompt-optimizer` in cordis.yml)

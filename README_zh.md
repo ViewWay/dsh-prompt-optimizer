@@ -36,10 +36,11 @@ dsh plugin --profile web add @yimiliya/dsh-prompt-optimizer-bundle
 
 bundle 会把 `prompt-optimizer`、`api-prompt-optimizer`、`ui-prompt-optimizer` 三个条目叠加进该 profile 的 `dsh.profile.bundles`。也可以在 Web 客户端的插件市场里安装。
 
-未发布时可以从本地路径或 git 安装（pnpm 会把 `workspace:*` 解析为对应版本）：
+未发布前请用 tarball 安装。直接写本地路径或 git 地址**不可用**：bundle 的 `workspace:*` 依赖只在本仓库的 pnpm workspace 内可解析，而 `dsh plugin add` 是在 profile 自己的安装根里装。打包会把版本范围改写为真实版本号（`pnpm -r pack`），tarball 的依赖随后从 registry 解析——因此这条路需要另外三个包已发布：
 
 ```sh
-dsh plugin --profile web add /path/to/dsh-prompt-optimizer/packages/bundle
+pnpm -r pack        # 在各包目录生成 *.tgz
+dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundle-<version>.tgz
 ```
 
 ### 配置（可选，cordis.yml 的 `plugins > config > prompt-optimizer`）
