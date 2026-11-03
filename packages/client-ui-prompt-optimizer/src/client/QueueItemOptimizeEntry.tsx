@@ -27,7 +27,7 @@ export interface QueueItemOptimizeEntryInjected {
 /**
  * Queue-row owner share declared structurally: the harness slot
  * `conversation.input.dock.queue.item` is declared by no published harness
- * release up to 0.2.1-rc.3, so its `PropsRuntime` lookup is absent from
+ * release up to 0.2.1-rc.5, so its `PropsRuntime` lookup is absent from
  * published slot maps.
  */
 export interface QueueItemOptimizeEntryProps

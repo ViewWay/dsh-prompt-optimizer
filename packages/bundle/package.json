@@ -1,7 +1,7 @@
 {
   "name": "@yimiliya/dsh-prompt-optimizer-bundle",
   "description": "Profile bundle stacking the dsh-prompt-optimizer plugin family",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -10,6 +10,9 @@
   "homepage": "https://github.com/ViewWay/dsh-prompt-optimizer#readme",
   "bugs": "https://github.com/ViewWay/dsh-prompt-optimizer/issues",
   "type": "module",
+  "engines": {
+    "dsh": ">=0.2.1-rc.5 <0.3.0"
+  },
   "dependencies": {
     "@yimiliya/dsh-api-prompt-optimizer": "workspace:*",
     "@yimiliya/dsh-client-ui-prompt-optimizer": "workspace:*",

@@ -1,0 +1,98 @@
+name: Canary
+
+# Weekly probe of harness compatibility: run the full gate against the newest
+# published @deepseek-ai/dsh release so a harness breakage surfaces as an issue
+# here instead of as a failed plugin install. The engines.dsh range
+# (docs/compatibility.md) keeps installs working across the 0.2.x line; this
+# workflow is what detects a release that actually breaks us.
+on:
+  schedule:
+    - cron: '0 4 * * 1' # Mondays 04:00 UTC
+  workflow_dispatch:
+    inputs:
+      dsh-version:
+        description: 'dsh version to test (defaults to the npm latest dist-tag)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: canary
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    name: Gate against ${{ inputs.dsh-version || 'npm latest' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The root package.json pins pnpm via its `packageManager` field.
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Resolve the harness version under test
+        id: ver
+        shell: bash
+        run: |
+          V='${{ inputs.dsh-version }}'
+          if [ -z "$V" ]; then V="$(npm view @deepseek-ai/dsh dist-tags.latest)"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "testing dsh $V"
+
+      # An npm publish does not guarantee the matching dsh-v<version> git tag
+      # was pushed; skip with a notice instead of failing for that.
+      - name: Check the harness git tag exists
+        id: tag
+        shell: bash
+        run: |
+          if git ls-remote --tags https://github.com/deepseek-ai/deepseek-harness.git \
+            "refs/tags/dsh-v${{ steps.ver.outputs.version }}" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no git tag dsh-v${{ steps.ver.outputs.version }} on deepseek-ai/deepseek-harness; skipping this run"
+          fi
+
+      - name: Install dependencies
+        if: steps.tag.outputs.exists == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch the dsh harness sources
+        if: steps.tag.outputs.exists == 'true'
+        shell: bash
+        run: |
+          mkdir -p .tmp
+          git clone --depth 1 --branch "dsh-v${{ steps.ver.outputs.version }}" \
+            https://github.com/deepseek-ai/deepseek-harness.git .tmp/dsh-harness
+
+      - name: Install harness dependencies
+        if: steps.tag.outputs.exists == 'true'
+        run: pnpm install --frozen-lockfile
+        working-directory: .tmp/dsh-harness
+
+      - name: Full gate (lint + baseline + typecheck + build + test)
+        if: steps.tag.outputs.exists == 'true'
+        shell: bash
+        run: DSH_HARNESS_ROOT=$PWD/.tmp/dsh-harness pnpm run check
+
+      - name: Open a tracking issue on failure
+        if: failure() && steps.tag.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE="Canary failed against dsh ${{ steps.ver.outputs.version }}"
+          if gh issue list --state open --json title \
+            --jq '.[] | select(.title == "'""$TITLE""'"") | .number' | grep -q .; then
+            echo "An open issue already tracks this failure."
+          else
+            gh issue create --title "$TITLE" \
+              --body "The weekly canary run of the full gate failed against harness tag dsh-v${{ steps.ver.outputs.version }}. Log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Next: adapt the baseline (docs/compatibility.md, peer/dev pins, workflow clone tags) or move engines.dsh if the range needs to change."
+          fi
