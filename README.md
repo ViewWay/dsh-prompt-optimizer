@@ -9,7 +9,7 @@ A standalone, independently distributed plugin family for the DeepSeek Harness t
 ## Features
 
 - One-click **Optimize** button on the input box plus domain recommendation chips; multi-round optimization with retry and per-round diff preview
-- **Role library** (`<slug>.md` files): a 164-role catalog ships inside the package and is used whenever `rolesDir` is unset; list roles on demand, recommend by draft, re-run with an explicit role; set a default role in the settings page
+- **Role library** (`<slug>.md` files): a 165-role catalog ships inside the package and is used whenever `rolesDir` is unset; list roles on demand, recommend by draft, re-run with an explicit role; set a default role in the settings page
 - **Skill awareness** (`skillAware`): when a draft matches an installed skill, its name and description are folded into the meta-prompt so the output references those skills — guarded by exact-name constraints against hallucination. Chinese and English drafts both match: a built-in bilingual gloss bridges Chinese terms like 页面／接口／部署 to English-described skills and back
 - **Optimization directions**: five chips on the preview panel (more concise / more detailed / more technical / restructure / stronger acceptance) re-run the round toward a picked direction and echo the active one; directions are a fixed enum — no free text, so no prompt injection
 - **Prompt library**: save any result with one click; the library button on the input row opens a management panel — browse, expand, insert into the draft, re-optimize from a stored entry, or delete with a two-step confirm (newest first)
