@@ -313,7 +313,10 @@ describe('PromptOptimizer.optimize', () => {
 
     await expect(ctx.promptOptimizer.optimize(
       { sessionId: session.id, text: 'draft' }, new AbortController().signal,
-    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_ADAPTER' })
+    )).rejects.toMatchObject({
+      code: 'PROMPT_OPTIMIZER_NO_ADAPTER',
+      message: expect.stringContaining('provider "unregistered-route" has no active model adapter in this app; available providers: "registered-route"'),
+    })
     expect(llmRequests(session.snapshotEvents())).toHaveLength(0)
   })
 

@@ -365,6 +365,23 @@ function normalizeLanguage(language: string | undefined): string | undefined {
 }
 
 /**
+ * Build the no-adapter failure body: the requested id, the routes the app
+ * currently serves, and the exact-match rule. Route keys are matched
+ * character-for-character, so gateway-deployed models (LiteLLM, vLLM,
+ * Ollama, …) fail here on any id drift such as a mistyped capital letter.
+ * @param ctx - runtime context carrying the llm registry.
+ * @param provider - route key the resolved optimization route requested.
+ * @returns the actionable failure message.
+ */
+function noAdapterMessage(ctx: Context, provider: string): string {
+  const routes = ctx.llm.listProviders().map(info => JSON.stringify(info.id))
+  const available = routes.length === 0
+    ? 'the app currently registers no model providers'
+    : `available providers: ${routes.join(', ')}`
+  return `prompt-optimizer: provider ${JSON.stringify(provider)} has no active model adapter in this app; ${available}. provider ids match the route keys in model settings exactly — pick an available model in the composer, or configure provider and model together (gateway-deployed models like LiteLLM/vLLM/Ollama need the exact configured id)`
+}
+
+/**
  * Throw one typed service failure.
  * @param code - stable PROMPT_OPTIMIZER_* failure code carried on `error.code`.
  * @param message - localized-enough actionable failure text.
@@ -488,7 +505,7 @@ export default class PromptOptimizer extends Service {
     } catch (error) {
       callDeadline.signal.throwIfAborted()
       if (error instanceof LlmError && error.code === 'NO_ADAPTER') {
-        fail('PROMPT_OPTIMIZER_NO_ADAPTER', `prompt-optimizer: provider "${options.route.provider}" has no active model adapter in this app; pick an available model in the composer or configure provider and model together`)
+        fail('PROMPT_OPTIMIZER_NO_ADAPTER', noAdapterMessage(this.ctx, options.route.provider))
       }
       throw error
     }
@@ -876,7 +893,7 @@ export default class PromptOptimizer extends Service {
         } catch (error) {
           callDeadline.signal.throwIfAborted()
           if (error instanceof LlmError && error.code === 'NO_ADAPTER') {
-            fail('PROMPT_OPTIMIZER_NO_ADAPTER', `prompt-optimizer: provider "${route.provider}" has no active model adapter in this app; pick an available model in the composer or configure provider and model together`)
+            fail('PROMPT_OPTIMIZER_NO_ADAPTER', noAdapterMessage(this.ctx, route.provider))
           }
           throw error
         }
