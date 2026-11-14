@@ -12,6 +12,8 @@ A standalone, independently distributed plugin family for the DeepSeek Harness t
 - **Role library** (`<slug>.md` files): a 164-role catalog ships inside the package and is used whenever `rolesDir` is unset; list roles on demand, recommend by draft, re-run with an explicit role; set a default role in the settings page
 - **Skill awareness** (`skillAware`): when a draft matches an installed skill, its name and description are folded into the meta-prompt so the output references those skills — guarded by exact-name constraints against hallucination. Chinese and English drafts both match: a built-in bilingual gloss bridges Chinese terms like 页面／接口／部署 to English-described skills and back
 - **Optimization directions**: five chips on the preview panel (more concise / more detailed / more technical / restructure / stronger acceptance) re-run the round toward a picked direction and echo the active one; directions are a fixed enum — no free text, so no prompt injection
+- **Model-tier awareness**: the rewrite conditions on the resolved route's capability tier — reasoning models get scaffolding-free, specification-dense rewrites; small local models behind LiteLLM/vLLM/Ollama get every invariant spelled out
+- **Decline to optimize** (`skipCheck`): a short, clear, generic draft on a reasoning model is declined with an explanation instead of rewritten — the honest "this is better sent as is"; any explicit rerun still dispatches
 - **Prompt library**: save any result with one click; the library button on the input row opens a management panel — browse, expand, insert into the draft, re-optimize from a stored entry, or delete with a two-step confirm (newest first)
 - **Output language follows the agent UI language**: a Chinese interface yields Chinese prompts, English yields English, while code identifiers, paths and commands stay verbatim
 - Inline **Optimize** entry on queued (unsent) conversation items
@@ -77,6 +79,7 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 | `rolesDir` | bundled catalog | Role definition directory override (`<slug>.md`); the shipped role library is used when unset and stays read-only for role evolution |
 | `defaultRole` | unset | Default role slug when none is specified; also settable in the settings page |
 | `skillAware` | `true` | Fold matched installed skills into the meta-prompt |
+| `skipCheck` | `true` | Let the decline-to-optimize precheck skip rounds it cannot improve |
 
 ## Privacy
 
@@ -84,6 +87,7 @@ Optimization runs are recorded in the session's own event log; treat drafts acco
 
 - Every optimization round appends a `plugin:prompt-optimizer/llm-request` record containing the full draft text and the auxiliary system prompt.
 - Every check run appends a `plugin:prompt-optimizer/verify` record containing the executed command and its (redacted) output.
+- A declined round appends a `plugin:prompt-optimizer/skipped` record containing the stable skip reason and the draft's byte size.
 - "Improve this role" rewrites the role definition file `<slug>.md` under the configured `rolesDir` on disk; the previous version is kept alongside it as `<slug>.md.bak`. The bundled default catalog is read-only: configure `rolesDir` to enable role evolution.
 
 If you paste secrets into a draft, expect them to appear in the session log.

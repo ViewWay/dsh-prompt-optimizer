@@ -33,7 +33,7 @@ class RecordingAdapter extends LlmAdapter {
 
 const CONFIG: Config = {
   maxInputBytes: 1_000, maxOutputTokens: 64, timeoutMs: 1_000, verifyTimeoutMs: 2_000,
-  domainPriors: true, skillAware: false,
+  domainPriors: true, skillAware: false, skipCheck: false,
 }
 
 /** Committed optimizer LLM-request record payloads in `events`, oldest first. */
@@ -115,6 +115,7 @@ describe('PromptOptimizer.optimize', () => {
       ],
       provider: 'current-route',
       model: 'current-model',
+      tier: 'standard',
       usage: { inputTokens: 12, outputTokens: 34 },
     })
     expect(requestWasLoggedAtDispatch).toBe(true)
@@ -134,6 +135,77 @@ describe('PromptOptimizer.optimize', () => {
       previousAttempts: 0,
     })
     expect(logged?.messages).toEqual(options.messages)
+  })
+
+  it('declines a short clear draft on a reasoning route without dispatching', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(
+      envelope('不应出现的改写', []),
+      { ...CONFIG, skipCheck: true, provider: 'current-route', model: 'deepseek-reasoner' },
+    )
+    const session = ctx.sessions.get(sessionId)!
+    const draft = '帮我把这个函数改成异步的'
+
+    const result = await ctx.promptOptimizer.optimize(
+      { sessionId, text: draft },
+      new AbortController().signal,
+    )
+
+    expect(result).toEqual({
+      optimizedText: draft,
+      changes: [],
+      acceptance: [],
+      provider: 'current-route',
+      model: 'deepseek-reasoner',
+      tier: 'reasoning',
+      skipped: true,
+      skipReason: 'reasoning-short-clear',
+    })
+    expect(adapter.requests).toHaveLength(0)
+    const skipped = session.snapshotEvents().flatMap(event => {
+      const record = pluginRecordOf(event)
+      return record?.type === 'plugin:prompt-optimizer/skipped' ? [record.data] : []
+    })
+    expect(skipped).toEqual([{
+      reason: 'reasoning-short-clear',
+      tier: 'reasoning',
+      target: 'draft',
+      inputBytes: Buffer.byteLength(draft, 'utf8'),
+    }])
+  })
+
+  it('force bypasses the decline and conditions the reasoning-tier guidance', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(
+      envelope('强制改写', []),
+      { ...CONFIG, skipCheck: true, provider: 'current-route', model: 'deepseek-reasoner' },
+    )
+
+    const result = await ctx.promptOptimizer.optimize(
+      { sessionId, text: '帮我把这个函数改成异步的', force: true },
+      new AbortController().signal,
+    )
+
+    expect(result.optimizedText).toBe('强制改写')
+    expect(result.skipped).toBeUndefined()
+    expect(result.tier).toBe('reasoning')
+    expect(adapter.requests).toHaveLength(1)
+    expect(adapter.requests[0]!.system).toContain('REASONING model')
+  })
+
+  it('classifies the route tier on the normal path and logs it with the request', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(
+      envelope('显式改写', []),
+      { ...CONFIG, provider: 'current-route', model: 'qwen2.5-7b-instruct' },
+    )
+    const session = ctx.sessions.get(sessionId)!
+
+    const result = await ctx.promptOptimizer.optimize(
+      { sessionId, text: 'draft' },
+      new AbortController().signal,
+    )
+
+    expect(result.tier).toBe('local-small')
+    expect(adapter.requests[0]!.system).toContain('SMALL LOCAL model')
+    expect(llmRequests(session.snapshotEvents()).at(-1)?.tier).toBe('local-small')
   })
 
   it('quotes rejected earlier results in the round input and records their count', async () => {

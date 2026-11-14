@@ -89,6 +89,7 @@ const _optimize_parameter_0 = () => (_optimize_parameter_0$value ??= z.object({
   'role': z.string().readonly().optional().describe('Role slug whose definition styles the rewrite; absent for a generic rewrite.'),
   'language': z.string().readonly().optional().describe('Self-describing name of the language the rewrite must be written in (for example `中文`); absent keeps the draft\'s language.'),
   'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional().describe('Direction the next rewrite should push toward; absent applies the plain rules.'),
+  'force': z.boolean().readonly().optional().describe('True bypasses the decline-to-optimize precheck and forces a rewrite round.'),
 }))
 let _optimize_result$value
 const _optimize_result = () => (_optimize_result$value ??= z.object({
@@ -105,6 +106,9 @@ const _optimize_result = () => (_optimize_result$value ??= z.object({
   'role': z.string().readonly().optional().describe('Role slug that styled the round; absent when no role was requested.'),
   'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional().describe('Direction the round applied; absent when the plain rules governed it.'),
   'skills': z.array(z.string()).readonly().optional().describe('Names of the installed-skill hints that conditioned the round; absent when none matched.'),
+  'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional().describe('Capability tier of the route that produced (or would produce) the result.'),
+  'skipped': z.boolean().readonly().optional().describe('True when the precheck declined to rewrite; `optimizedText` then equals the draft verbatim.'),
+  'skipReason': z.literal('reasoning-short-clear').readonly().optional().describe('Stable reason the precheck declined; present exactly when `skipped` is true.'),
   'usage': z.object({
     'inputTokens': z.number(),
     'outputTokens': z.number(),
@@ -176,6 +180,7 @@ const _optimize_parameter_0_strict = () => (_optimize_parameter_0_strict$value ?
   'role': z.string().readonly().optional(),
   'language': z.string().readonly().optional(),
   'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional(),
+  'force': z.boolean().readonly().optional(),
 }))
 let _recommendRoles_parameter_0_strict$value
 const _recommendRoles_parameter_0_strict = () => (_recommendRoles_parameter_0_strict$value ??= z.strictObject({
@@ -306,13 +311,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] } }, required: ['sessionId', 'text'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' } }, required: ['sessionId', 'text'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] } }, required: ['sessionId', 'text'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' } }, required: ['sessionId', 'text'], additionalProperties: false },
           },
         },
       ],
@@ -322,7 +327,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeResult',
         create: _optimize_result,
         description: 'the parsed optimization result for preview.',
-        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, skills: { type: 'array', items: { type: 'string' } }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 43, column: 9 },
     },

@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, IconCheckOutlineRegular, IconCloseOutlineRegular, IconRefreshOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PromptOptimizeDirection, PromptRoleEvolveResult, PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
+import type { ModelTier, PromptOptimizeDirection, PromptRoleEvolveResult, PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
 import type { PromptOptimizationPreview, OptimizationSnapshot } from './optimization.ts'
 import type { PromptOptimizerKey } from './locales.ts'
 import { usePromptRoles } from './use-prompt-roles.ts'
@@ -19,6 +19,17 @@ const DIRECTION_LABEL_KEYS: Readonly<Record<PromptOptimizeDirection, PromptOptim
   technical: 'directionTechnical',
   structured: 'directionStructured',
   acceptance: 'directionAcceptance',
+}
+
+/** Non-standard target-model tiers worth a badge; `standard` stays unmarked. */
+const TIER_LABEL_KEYS: Readonly<Partial<Record<ModelTier, PromptOptimizerKey>>> = {
+  reasoning: 'tierReasoning',
+  'local-small': 'tierLocalSmall',
+}
+
+/** Locale key explaining each stable skip reason. */
+const SKIP_ADVICE_KEYS: Readonly<Record<string, PromptOptimizerKey>> = {
+  'reasoning-short-clear': 'skipAdviceReasoningShort',
 }
 
 /** Host verbs injected by the mount; each takes the Session whose preview is open. */
@@ -155,6 +166,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const [critiqueCopyFailed, setCritiqueCopyFailed] = useState(false)
   if (state === undefined) return null
   const ready = state.phase === 'ready' && state.result !== undefined
+  const skipped = ready && state.result.skipped === true
+  const tierLabelKey = ready ? TIER_LABEL_KEYS[state.result.tier ?? 'standard'] : undefined
 
   const runCheck = (criterion: string, template: string): void => {
     const current = checks[criterion] ?? CHECK_IDLE
@@ -251,6 +264,9 @@ export function PreviewPanel(props: PreviewPanelProps) {
           {state.queueItemId !== undefined
             ? <span className={css.roleBadge} data-testid="optimization-queue">{t('queueBadge')}</span>
             : null}
+          {tierLabelKey !== undefined
+            ? <span className={css.roleBadge} data-testid="optimization-tier">{t(tierLabelKey)}</span>
+            : null}
           {roles.length > 0
             ? <RoleSelector
               roles={roles}
@@ -297,7 +313,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
               </div>}
           </div>
         </div>
-        {ready || state.phase === 'failed'
+        {(ready && !skipped) || state.phase === 'failed'
           ? <div className={css.directionRow} data-testid="optimization-directions">
             <span className={css.directionLabel}>{t('directionLabel')}</span>
             {PROMPT_DIRECTIONS.map(id => {
@@ -314,6 +330,20 @@ export function PreviewPanel(props: PreviewPanelProps) {
                 </button>
               )
             })}
+          </div>
+          : null}
+        {skipped && state.result.skipReason !== undefined
+          ? <div className={css.critique} data-testid="optimization-skip">
+            <p className={css.noChanges}>{t(SKIP_ADVICE_KEYS[state.result.skipReason] ?? 'skipAdviceReasoningShort')}</p>
+            <div className={css.critiqueActions}>
+              <Button
+                size="sm" type="button"
+                onClick={() => { regenerate(matched.sessionId) }}
+                data-testid="skip-force"
+              >
+                {t('skipForce')}
+              </Button>
+            </div>
           </div>
           : null}
         {ready && state.result.changes.length > 0
@@ -427,7 +457,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             </div>
           </div>
           : null}
-        {ready && state.result.changes.length === 0
+        {ready && !skipped && state.result.changes.length === 0
           ? <p className={css.noChanges}>{t('emptyChanges')}</p>
           : null}
         {state.phase === 'failed'
@@ -467,7 +497,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             : null}
           <Button
             size="sm" type="button" variant="primary" className={css.primary}
-            disabled={!ready || (state.apply === undefined && state.queueItemId === undefined)}
+            disabled={!ready || skipped || (state.apply === undefined && state.queueItemId === undefined)}
             onClick={() => { apply(matched.sessionId) }}
           >
             <IconCheckOutlineRegular size={14} />

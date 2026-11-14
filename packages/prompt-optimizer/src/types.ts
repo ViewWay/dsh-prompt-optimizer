@@ -18,6 +18,17 @@ export type PromptOptimizeTarget = 'draft' | 'system'
  */
 export type PromptOptimizeDirection = 'concise' | 'detailed' | 'technical' | 'structured' | 'acceptance'
 
+/**
+ * Capability tier of the model the rewrite targets, decided from the resolved
+ * route: `reasoning` models plan internally (elaborate prompting scaffolding
+ * adds noise), `local-small` models behind self-hosted gateways need every
+ * invariant spelled out, `standard` covers the remaining chat models.
+ */
+export type ModelTier = 'reasoning' | 'local-small' | 'standard'
+
+/** Why a round was declined instead of rewritten; the client localizes the advice. */
+export type PromptSkipReason = 'reasoning-short-clear'
+
 /** One selectable professional role from the configured roles directory. */
 export interface PromptRoleSummary {
   /** Role slug matching a `<slug>.md` definition file in the configured roles directory. */
@@ -91,6 +102,8 @@ export interface PromptOptimizeRequest {
   readonly language?: string
   /** Direction the next rewrite should push toward; absent applies the plain rules. */
   readonly direction?: PromptOptimizeDirection
+  /** True bypasses the decline-to-optimize precheck and forces a rewrite round. */
+  readonly force?: boolean
 }
 
 /** One draft acceptance criterion the rewritten prompt should be judged against. */
@@ -123,6 +136,12 @@ export interface PromptOptimizeResult {
   readonly direction?: PromptOptimizeDirection
   /** Names of the installed-skill hints that conditioned the round; absent when none matched. */
   readonly skills?: readonly string[]
+  /** Capability tier of the route that produced (or would produce) the result. */
+  readonly tier?: ModelTier
+  /** True when the precheck declined to rewrite; `optimizedText` then equals the draft verbatim. */
+  readonly skipped?: boolean
+  /** Stable reason the precheck declined; present exactly when `skipped` is true. */
+  readonly skipReason?: PromptSkipReason
   /** Usage from the stream's `usage` chunk; absent until one arrives. */
   readonly usage?: TokenUsage
 }

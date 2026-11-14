@@ -34,6 +34,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type {
+  ModelTier,
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
@@ -46,6 +47,7 @@ import type {
   PromptRoleRecommendation,
   PromptRoleRecommendRequest,
   PromptRoleSummary,
+  PromptSkipReason,
   PromptVerifyRequest,
   PromptVerifyResult,
 } from './types.ts'
@@ -62,6 +64,7 @@ import {
 } from './meta-prompt.ts'
 import type { PromptRoleRef, RoundConditioning } from './meta-prompt.ts'
 import { recommendRoles as rankRoles } from './recommend.ts'
+import { classifyModelTier, declineToOptimize } from './model-tier.ts'
 import { enrichSkillHint, MAX_DETAIL_HINTS, selectSkillHints } from './skills.ts'
 import type { SkillHint } from './skills.ts'
 import { screenVerifyCommand } from './verify-policy.ts'
@@ -79,6 +82,8 @@ declare module '@deepseek-ai/dsh-session/types' {
     'plugin:prompt-optimizer/verify': PromptOptimizerVerifyEventData
     /** Log-only record of one completed role-definition evolution. */
     'plugin:prompt-optimizer/role-evolved': PromptOptimizerRoleEvolvedEventData
+    /** Log-only record of one round the precheck declined to rewrite. */
+    'plugin:prompt-optimizer/skipped': PromptOptimizerSkippedEventData
   }
 }
 
@@ -115,6 +120,20 @@ export interface PromptOptimizerLlmRequestEventData {
   readonly language?: string
   /** Rewrite direction the round applied; absent when the plain rules governed it. */
   readonly direction?: PromptOptimizeDirection
+  /** Capability tier of the round's route. */
+  readonly tier?: ModelTier
+}
+
+/** One round the precheck declined to rewrite, recorded instead of a dispatch. */
+export interface PromptOptimizerSkippedEventData {
+  /** Stable reason the precheck declined the round. */
+  readonly reason: PromptSkipReason
+  /** Capability tier of the route the round would have dispatched on. */
+  readonly tier: ModelTier
+  /** What the text was optimized as; always `draft` for a decline. */
+  readonly target: PromptOptimizeTarget
+  /** UTF-8 byte size of the declined draft text. */
+  readonly inputBytes: number
 }
 
 /** One executed acceptance-criterion check command, recorded after completion. */
@@ -165,6 +184,8 @@ export interface Config {
   readonly defaultRole?: string
   /** Whether installed-skill hints join the meta-prompt when skills match the draft. */
   readonly skillAware: boolean
+  /** Whether the decline-to-optimize precheck may skip rounds it cannot improve. */
+  readonly skipCheck: boolean
 }
 
 /** Longest check command accepted by {@link PromptOptimizer.verify}. */
@@ -458,6 +479,7 @@ export default class PromptOptimizer extends Service {
     rolesDir: z.string(),
     defaultRole: z.string(),
     skillAware: z.boolean().default(true),
+    skipCheck: z.boolean().default(true),
   })
 
   constructor(ctx: Context, private readonly config: Config) {
@@ -492,6 +514,7 @@ export default class PromptOptimizer extends Service {
     readonly skillsHinted: number
     readonly language: string | undefined
     readonly direction: PromptOptimizeDirection | undefined
+    readonly tier: ModelTier
   }, signal: AbortSignal): Promise<{ parsed: ReturnType<typeof parseOptimizerResponse>; usage: TokenUsage | undefined }> {
     const messages: Message[] = [createUserMessage({
       content: [{ type: 'text', text: options.input }],
@@ -529,6 +552,7 @@ export default class PromptOptimizer extends Service {
       skillsHinted: options.skillsHinted,
       ...(options.language !== undefined ? { language: options.language } : {}),
       ...(options.direction !== undefined ? { direction: options.direction } : {}),
+      tier: options.tier,
     })
     callDeadline.signal.throwIfAborted()
     const assembler = new BlockAssembler()
@@ -584,7 +608,37 @@ export default class PromptOptimizer extends Service {
     const requestedRole = request.role ?? this.config.defaultRole
     const role = requestedRole === undefined ? undefined : await this.loadRole(requestedRole, signal)
     const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+    const tier = classifyModelTier(route.provider, route.model)
     const priors = this.config.domainPriors ? detectDomainPriors(request.text) : []
+    if (this.config.skipCheck && request.force !== true) {
+      const skipReason = declineToOptimize({
+        tier,
+        target,
+        draft: request.text,
+        domainPriors: priors,
+        role: requestedRole,
+        direction,
+        previousAttempts,
+      })
+      if (skipReason !== undefined) {
+        appendPluginRecord(session, 'plugin:prompt-optimizer/skipped', {
+          reason: skipReason,
+          tier,
+          target,
+          inputBytes,
+        })
+        return {
+          optimizedText: request.text,
+          changes: [],
+          acceptance: [],
+          provider: route.provider,
+          model: route.model,
+          tier,
+          skipped: true,
+          skipReason,
+        }
+      }
+    }
     const language = normalizeLanguage(request.language)
     const rankingContext = [request.text, this.inboxText(session)].filter(part => part !== '').join('\n')
     const skills = await this.resolveSkillHints(session, rankingContext, signal)
@@ -592,6 +646,7 @@ export default class PromptOptimizer extends Service {
     const conditioning: RoundConditioning = {
       domainPriors: priors,
       skills,
+      tier,
       ...(role !== undefined ? { role } : {}),
       ...(language !== undefined ? { language } : {}),
       ...(direction !== undefined ? { direction } : {}),
@@ -609,6 +664,7 @@ export default class PromptOptimizer extends Service {
       skillsHinted: skills.length,
       language,
       direction,
+      tier,
     }, signal)
     if (first.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the model returned an empty rewrite')
@@ -620,6 +676,7 @@ export default class PromptOptimizer extends Service {
         acceptance: first.parsed.acceptance,
         provider: route.provider,
         model: route.model,
+        tier,
         ...(role !== undefined ? { role: role.id } : {}),
         ...(direction !== undefined ? { direction } : {}),
         ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
@@ -639,6 +696,7 @@ export default class PromptOptimizer extends Service {
       skillsHinted: skills.length,
       language,
       direction,
+      tier,
     }, signal)
     if (critique.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the critique round returned an empty rewrite')
@@ -651,6 +709,7 @@ export default class PromptOptimizer extends Service {
       critique: critique.parsed.changes,
       provider: route.provider,
       model: route.model,
+      tier,
       ...(role !== undefined ? { role: role.id } : {}),
       ...(direction !== undefined ? { direction } : {}),
       ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),

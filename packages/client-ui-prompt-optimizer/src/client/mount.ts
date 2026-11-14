@@ -46,6 +46,8 @@ interface RoundRequest {
   readonly role: string | undefined
   /** Direction the round pushes toward; undefined applies the plain rules. */
   readonly direction: PromptOptimizeDirection | undefined
+  /** True forces a rewrite round past the host's decline-to-optimize precheck. */
+  readonly force: boolean
   /** Pending queue item the round rewrites in place; absent for a draft round. */
   readonly queueItemId: QueueItemId | undefined
 }
@@ -130,6 +132,7 @@ function registerUi(ctx: Context): void {
             ...(state.role !== undefined ? { role: state.role } : {}),
             ...(language !== undefined ? { language } : {}),
             ...(state.direction !== undefined ? { direction: state.direction } : {}),
+            ...(state.force ? { force: true } : {}),
           },
           controller.signal,
         )
@@ -196,22 +199,23 @@ function registerUi(ctx: Context): void {
   ): void => {
     const state = store.getSnapshot()[sessionId]
     if (state === undefined || (state.queueItemId === undefined && state.apply === undefined)) return
+    // An explicit rerun means the user asked for a rewrite: force past the decline precheck.
     const rejected = state.result === undefined ? state.previousAttempts : [...state.previousAttempts, state.result.optimizedText]
     runRound(sessionId, {
       draft: state.draft, previousAttempts: rejected, apply: state.apply ?? (() => {}), target,
-      role, direction: direction ?? state.direction, queueItemId: state.queueItemId,
+      role, direction: direction ?? state.direction, force: true, queueItemId: state.queueItemId,
     })
   }
 
   const actions = {
     start: (sessionId: SessionId, text: string, apply: (text: string) => void, role?: string): void => {
       openPreview(sessionId)
-      runRound(sessionId, { draft: text, previousAttempts: [], apply, target: 'draft', role, direction: undefined, queueItemId: undefined })
+      runRound(sessionId, { draft: text, previousAttempts: [], apply, target: 'draft', role, direction: undefined, force: false, queueItemId: undefined })
     },
     startQueued: (sessionId: SessionId, itemId: QueueItemId, text: string, role?: string): void => {
       openPreview(sessionId)
       runRound(sessionId, {
-        draft: text, previousAttempts: [], apply: () => {}, target: 'draft', role, direction: undefined, queueItemId: itemId,
+        draft: text, previousAttempts: [], apply: () => {}, target: 'draft', role, direction: undefined, force: false, queueItemId: itemId,
       })
     },
     apply: (sessionId: SessionId): void => {

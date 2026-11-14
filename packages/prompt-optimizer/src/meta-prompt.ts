@@ -8,8 +8,9 @@
  * @module @yimiliya/dsh-prompt-optimizer
  */
 
-import type { PromptOptimizeDirection } from './types.ts'
+import type { ModelTier, PromptOptimizeDirection } from './types.ts'
 import type { SkillHint, SkillParameter } from './skills.ts'
+import { modelTierBlock } from './model-tier.ts'
 
 /** Starts the rewritten-prompt section of the model response. */
 export const OPTIMIZED_MARKER = '<<<OPTIMIZED_PROMPT>>>'
@@ -174,6 +175,11 @@ export interface RoundConditioning {
    * `中文`); absent keeps the draft's language.
    */
   readonly language?: string
+  /**
+   * Capability tier of the route the rewritten prompt will run on; absent or
+   * `standard` adds no tier guidance.
+   */
+  readonly tier?: ModelTier
   /** Direction the rewrite should push toward; absent applies the plain rules. */
   readonly direction?: PromptOptimizeDirection
 }
@@ -284,7 +290,7 @@ function writtenIn(language: string | undefined): string {
  * @returns exact system prompt text for every optimization round.
  */
 export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier } = conditioning
   return [
     'You are a prompt optimization specialist. The user gives you a draft prompt they intend to send to a coding agent. Rewrite the draft into a clear, well-structured prompt.',
     '',
@@ -300,6 +306,7 @@ export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): str
     `9. End with ${String(MAX_ACCEPTANCE)} or fewer acceptance criteria: one-line, verifiable conditions the finished task must satisfy, in ${writtenIn(language)}. `
       + 'Append a runnable check command in backticks when one exists; otherwise state the judgment point. Never invent success thresholds.',
     ...priorBlock(domainPriors),
+    ...(tier === undefined ? [] : modelTierBlock(tier)),
     ...(role === undefined ? [] : roleBlock(role, DRAFT_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),
@@ -316,7 +323,7 @@ export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): str
  * @returns exact system prompt text for a system-target rewrite round.
  */
 export function optimizerSystemPromptForSystem(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier } = conditioning
   return [
     'You are a prompt optimization specialist. The user gives you a draft SYSTEM prompt: the standing instruction block that governs a coding agent across a whole session, not a single chat message. Rewrite the draft into a clear, well-structured system prompt.',
     '',
@@ -332,6 +339,7 @@ export function optimizerSystemPromptForSystem(conditioning: RoundConditioning =
     `9. End with ${String(MAX_ACCEPTANCE)} or fewer acceptance criteria: one-line, verifiable conditions a reader can check the rewritten SYSTEM prompt against, in ${writtenIn(language)}. `
       + 'Append a runnable check command in backticks when one exists (for example a grep over the rewritten text); otherwise state the judgment point.',
     ...priorBlock(domainPriors),
+    ...(tier === undefined ? [] : modelTierBlock(tier)),
     ...(role === undefined ? [] : roleBlock(role, SYSTEM_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),
@@ -346,7 +354,7 @@ export function optimizerSystemPromptForSystem(conditioning: RoundConditioning =
  * @returns exact system prompt text for the critique round.
  */
 export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier } = conditioning
   return [
     'You are a prompt optimization specialist performing a critique round on a rewritten SYSTEM prompt. You receive the original draft and the first rewrite. Audit the rewrite, then output an improved full revision.',
     '',
@@ -365,6 +373,7 @@ export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): stri
     `5. List each revision you made as one short bullet, at most ${String(MAX_CHANGES)}; these bullets are the critique record.`,
     `6. End with ${String(MAX_ACCEPTANCE)} or fewer acceptance criteria as before.`,
     ...priorBlock(domainPriors),
+    ...(tier === undefined ? [] : modelTierBlock(tier)),
     ...(role === undefined ? [] : roleBlock(role, SYSTEM_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),

@@ -235,7 +235,7 @@ it('accumulates rejected results into the next round and cancels cleanly', async
 
     actions.regenerate(SESSION)
     await vi.waitFor(() => { expect(b.round).toHaveBeenCalledTimes(2) })
-    expect(b.round).toHaveBeenLastCalledWith({ sessionId: SESSION, text: 'draft', previousAttempts: ['优化后的提示词'], language: 'English' }, expect.any(AbortSignal))
+    expect(b.round).toHaveBeenLastCalledWith({ sessionId: SESSION, text: 'draft', previousAttempts: ['优化后的提示词'], language: 'English', force: true }, expect.any(AbortSignal))
 
     actions.cancel(SESSION)
     expect(b.published).toHaveLength(0)
@@ -260,7 +260,7 @@ it('re-runs with a newly picked role and adopts the host-resolved role into the 
     actions.regenerateAsRole(SESSION, 'qa-engineer')
     await vi.waitFor(() => { expect(styled.optimize).toHaveBeenCalledTimes(2) })
     expect(styled.optimize).toHaveBeenLastCalledWith({
-      sessionId: SESSION, text: 'draft', previousAttempts: ['优化后的提示词'], role: 'qa-engineer', language: 'English',
+      sessionId: SESSION, text: 'draft', previousAttempts: ['优化后的提示词'], role: 'qa-engineer', language: 'English', force: true,
     }, expect.any(AbortSignal))
     await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
 
@@ -268,7 +268,7 @@ it('re-runs with a newly picked role and adopts the host-resolved role into the 
     await vi.waitFor(() => { expect(styled.optimize).toHaveBeenCalledTimes(3) })
     expect(styled.optimize).toHaveBeenLastCalledWith({
       sessionId: SESSION, text: 'draft',
-      previousAttempts: ['优化后的提示词', '优化后的提示词'], role: undefined, language: 'English',
+      previousAttempts: ['优化后的提示词', '优化后的提示词'], role: undefined, language: 'English', force: true,
     }, expect.any(AbortSignal))
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }

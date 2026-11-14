@@ -34,6 +34,16 @@ describe('optimizerSystemPrompt', () => {
     expect(prompt).toContain('- Ask for the chip model.')
     expect(prompt.indexOf('Domain guidance')).toBeLessThan(prompt.indexOf('Respond with exactly'))
   })
+
+  it('conditions non-standard tiers and keeps standard byte-identical', () => {
+    const plain = optimizerSystemPrompt()
+    expect(optimizerSystemPrompt({ tier: 'standard' })).toBe(plain)
+    const reasoning = optimizerSystemPrompt({ tier: 'reasoning' })
+    expect(reasoning).toContain('REASONING model')
+    expect(reasoning.indexOf('REASONING model')).toBeGreaterThan(reasoning.indexOf('Rules:'))
+    expect(optimizerSystemPromptForSystem({ tier: 'local-small' })).toContain('SMALL LOCAL model')
+    expect(critiqueSystemPrompt({ tier: 'reasoning' })).toContain('REASONING model')
+  })
 })
 
 describe('detectDomainPriors', () => {

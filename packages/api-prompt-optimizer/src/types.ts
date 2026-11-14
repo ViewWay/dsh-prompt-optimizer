@@ -25,6 +25,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 }
 
 export type {
+  ModelTier,
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
@@ -37,6 +38,7 @@ export type {
   PromptRoleRecommendation,
   PromptRoleRecommendRequest,
   PromptRoleSummary,
+  PromptSkipReason,
   PromptVerifyRequest,
   PromptVerifyResult,
 } from '@yimiliya/dsh-prompt-optimizer/types'
