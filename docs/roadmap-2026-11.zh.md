@@ -31,11 +31,13 @@
 
 已落地形态：输入行 `?` 触发 `interview` RPC（独立元提示：最多 3 问、每问 ≤4 个可点选候选、`(free text)` 标记自由作答、领域先验直接转为提问清单、完整草稿允许零问题）；预览面板进入 `interviewing` 阶段渲染问题卡片（选项 chips + 自由输入），「带着澄清重新优化」把 Q&A 作为权威需求注入改写（系统侧规则：答案优先于草稿、按位并入而非附录）并恒定 force；答案在显式重跑中保留；「无需澄清」自动落入普通轮；带澄清的轮次永不被劝退预检拦截。记录 `plugin:prompt-optimizer/interview`（路由/问题数/字节）与 llm-request 的 `clarifications` 计数。
 
-### P2：评测闭环（GEPA 精神的落地版）
+### P2：评测闭环（GEPA 精神的落地版）——P2a 已落地
 
-- 金标集回归：`previousAttempts`（被拒候选）与被采纳结果落本地统计（采用率、verify 通过率、劝退命中率）。
-- 生成 N 候选 + LLM-judge 打分 + 帕累托展示。
-- 元提示模板任何改动先跑回归，防劣化；模型切换时提示「system prompt 是为旧模型调的，要重新优化吗」。
+**P2a 本地统计闭环（✅ 已落地，`feat/model-aware-p0` 分支）**：独立 `prompt_optimizer_metrics` 存储域（append-only 行：kind/route/tier/时间戳/计数，2000 行保留上限，**不含草稿内容**）；宿主自动写入四类（declined/interviewed 按问题数/clarified 按答案数/verify-passed·failed），客户端上报三类用户意图（adopted=替换草稿、rejected=显式重跑弃用、decline-overridden=「仍要优化」推翻劝退）；`listMetrics` 聚合（采用率、核验通过率、劝退与推翻、面试问题数）在设置页渲染为「本地统计」卡；`metrics` 配置可整体关闭。插件第一次能回答「我到底有没有用」。
+
+- 金标集回归：`previousAttempts`（被拒候选）与被采纳结果落本地统计（✅ 已随 P2a 落地）
+- 生成 N 候选 + LLM-judge 打分 + 帕累托展示（P2b，未做）
+- 元提示模板任何改动先跑回归，防劣化；模型切换时提示「system prompt 是为旧模型调的，要重新优化吗」（P2c，未做）
 
 ### P3：SKILL.md 蒸馏（原 P9）
 
@@ -55,3 +57,4 @@
 
 - P0 落地于分支 `feat/model-aware-p0`（commit d86a6c3）：分挡矩阵、劝退矩阵、模板注入、service 劝退/force/档位路径、controller 编解码往返。
 - P1 落地于同一分支：node 工程 156/156（面试模板与解析、澄清注入与校验、interview 派发与记录、controller 透传）、client 工程 81/81（面试流转、澄清随重跑保留、面试面板渲染、`?` 触发）。
+- P2a 落地于同一分支：全量 247/247（node 164：指标写入四路径、reportMetric 校验、listMetrics 聚合与率、无存储失败、关闭抑制；client 83：adopted/rejected 上报流转、设置页统计卡渲染）。

@@ -18,6 +18,12 @@ import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts
 import type { PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
 
 const SESSION = 'session-1' as SessionId
+/** Zeroed metrics aggregate the settings fixture serves by default. */
+const EMPTY_METRICS = {
+  adopted: 0, rejected: 0, declined: 0, declineOverridden: 0,
+  interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
+  adoptionRate: null, verifyPassRate: null, rows: 0,
+}
 const t: OptimizeButtonProps['t'] = (key, params) => {
   const template = (zh as Record<string, string>)[key] ?? (commonZh as Record<string, string>)[key] ?? key
   let text = template
@@ -249,6 +255,7 @@ function panelProps(state: OptimizationState | undefined, actions: Partial<Previ
     regenerateAsSystem: vi.fn(),
     regenerateAsRole: vi.fn(),
     regenerateWithDirection: vi.fn(),
+    regenerateForced: vi.fn(),
     reInterview: vi.fn(),
     answerInterview: vi.fn(),
     submitInterview: vi.fn(),
@@ -269,6 +276,22 @@ const READY: OptimizationState = { phase: 'ready', draft: '原始草稿', previo
 describe('PromptOptimizerSettings', () => {
   const ROLES = [{ id: 'imp-code-reviewer', name: '代码评审员' }, { id: 'qa-engineer', name: '测试工程师' }]
 
+  it('renders the local metrics card from the host aggregate', async () => {
+    const summary = {
+      adopted: 3, rejected: 1, declined: 2, declineOverridden: 1,
+      interviewQuestions: 5, clarifiedRounds: 2, verifyPassed: 4, verifyFailed: 1,
+      adoptionRate: 0.75, verifyPassRate: 0.8, rows: 17,
+    }
+    const base = settingsProps()
+    const props = { ...base.props, loadMetrics: vi.fn(async () => summary) }
+    render(<PromptOptimizerSettings {...props} />)
+    const card = await waitFor(() => screen.getByTestId('metrics-card'))
+    expect(card.textContent).toContain(zh.settingsMetricsAdoption.replace('{value}', '75%'))
+    expect(card.textContent).toContain(zh.settingsMetricsVerify.replace('{value}', '80%'))
+    expect(card.textContent).toContain('劝退轮次：2（被推翻 1）')
+    expect(card.textContent).toContain('澄清问题 5 个，带澄清改写 2 轮')
+  })
+
   function settingsProps(section: { defaultRole?: string } = {}, roles: readonly { id: string; name: string }[] = ROLES): {
     props: PromptOptimizerSettingsProps
     scope: ReturnType<typeof stubConfigForm<PromptOptimizerSettingsSection>>
@@ -281,6 +304,7 @@ describe('PromptOptimizerSettings', () => {
     const props = {
       view: 'page' as const, ...actions,
       loadRoles: vi.fn(async () => roles),
+      loadMetrics: vi.fn(async () => EMPTY_METRICS),
       useSettingsForm: bindSnapshotSelector(hooks.settingsForm),
       t,
     } as PromptOptimizerSettingsProps

@@ -1,7 +1,7 @@
 /** Default-role configuration on the plugin bundle's page. */
 import { useEffect, useId, useState } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import type { PromptRoleSummary } from '@yimiliya/dsh-prompt-optimizer/types'
+import type { PromptMetricsSummary, PromptRoleSummary } from '@yimiliya/dsh-prompt-optimizer/types'
 import { Button, SettingsForm, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { NS } from './locales.ts'
@@ -12,6 +12,8 @@ import css from './PromptOptimizerSettings.module.css'
 export interface PromptOptimizerSettingsInjected extends PromptOptimizerFormInjected {
   /** List the host's selectable role definitions; a failing listing keeps the staged text editable. */
   loadRoles: () => Promise<readonly PromptRoleSummary[]>
+  /** Aggregate the host's local metrics; a failing aggregate hides the card's numbers. */
+  loadMetrics: () => Promise<PromptMetricsSummary>
   /** Whether this activation's queue-item entry degraded on a host lacking its slot. */
   queueEntryUnavailable: boolean
 }
@@ -37,6 +39,16 @@ export function PromptOptimizerSettings(props: PromptOptimizerSettingsProps) {
   const [roles, setRoles] = useState<readonly PromptRoleSummary[]>([])
   const [rolesFailed, setRolesFailed] = useState(false)
   const [rolesLoaded, setRolesLoaded] = useState(false)
+  const [metrics, setMetrics] = useState<PromptMetricsSummary | undefined>(undefined)
+  useEffect(() => {
+    let alive = true
+    // A failing aggregate keeps the card's numbers hidden; the card stays titled.
+    void props.loadMetrics().then(
+      (summary) => { if (alive) setMetrics(summary) },
+      (error: unknown) => { void error; if (alive) setMetrics(undefined) },
+    )
+    return () => { alive = false }
+  }, [props.loadMetrics])
   useEffect(() => {
     let alive = true
     // A failing listing keeps the field a plain staged slug; the card stays usable.
@@ -76,5 +88,25 @@ export function PromptOptimizerSettings(props: PromptOptimizerSettingsProps) {
       {rolesUnavailable && !state.defaultRole.invalid && <p role="status" className={css.hint}>{t('settingsRolesDirGuide')}</p>}
     </div>
     </SettingsForm>
+    <div className={css.field} data-testid="metrics-card">
+      <div className={css.toolbar}>
+        <span className={css.hint}>{t('settingsMetricsTitle')}</span>
+      </div>
+      {metrics === undefined
+        ? <p role="status" className={css.hint}>{t('settingsMetricsUnavailable')}</p>
+        : metrics.rows === 0
+          ? <p role="status" className={css.hint}>{t('settingsMetricsEmpty')}</p>
+          : <ul className={css.hint}>
+            <li>{t('settingsMetricsAdoption', { value: percentOf(metrics.adoptionRate) })}</li>
+            <li>{t('settingsMetricsVerify', { value: percentOf(metrics.verifyPassRate) })}</li>
+            <li>{t('settingsMetricsDeclined', { count: String(metrics.declined), overridden: String(metrics.declineOverridden) })}</li>
+            <li>{t('settingsMetricsInterview', { questions: String(metrics.interviewQuestions), rounds: String(metrics.clarifiedRounds) })}</li>
+          </ul>}
+    </div>
   </>
+}
+
+/** Percentage rendering for a nullable rate; null shows as an em dash. */
+function percentOf(rate: number | null): string {
+  return rate === null ? '—' : `${Math.round(rate * 100)}%`
 }

@@ -8,6 +8,8 @@ import type {
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
+  PromptMetricReportRequest,
+  PromptMetricsSummary,
   PromptOptimizeRequest,
   PromptOptimizeResult,
   PromptRoleEvolveRequest,
@@ -69,6 +71,40 @@ export default class PromptOptimizerController extends TypertRemoteService {
       signal.throwIfAborted()
       const reason = error instanceof Error ? error.message : String(error)
       throw new RemoteError('prompt-optimizer/interview-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Record one user-decision metric the host cannot observe itself.
+   * @param request - session, decision kind, and the round's route.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   */
+  @Remote
+  async reportMetric(request: PromptMetricReportRequest, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    try {
+      return await this.ctx.promptOptimizer.reportMetric(request, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/metrics-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Aggregate the persisted local metrics for the settings card.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   * @returns decision counts, question totals, and adoption/verify rates.
+   */
+  @Remote
+  async listMetrics(signal: AbortSignal): Promise<PromptMetricsSummary> {
+    signal.throwIfAborted()
+    try {
+      return await this.ctx.promptOptimizer.listMetrics(signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/metrics-failed', reason, { reason }, { cause: error })
     }
   }
 

@@ -13,6 +13,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'prompt-optimizer/optimization-failed': { readonly reason: string }
     /** One intent-clarification interview round failed; `reason` names the typed service failure. */
     'prompt-optimizer/interview-failed': { readonly reason: string }
+    /** One local-metrics operation failed; `reason` names the typed service failure. */
+    'prompt-optimizer/metrics-failed': { readonly reason: string }
     /** One acceptance-criterion check command failed to run; `reason` names the typed service failure. */
     'prompt-optimizer/verify-failed': { readonly reason: string }
     /** One acceptance-criterion check command was rejected by the host safety policy; `reason` names the matched deny rule. */
@@ -35,6 +37,9 @@ export type {
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
+  PromptMetricKind,
+  PromptMetricReportRequest,
+  PromptMetricsSummary,
   PromptOptimizeDirection,
   PromptOptimizeRequest,
   PromptOptimizeResult,

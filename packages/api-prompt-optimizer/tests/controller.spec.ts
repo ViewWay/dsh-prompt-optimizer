@@ -80,6 +80,40 @@ it('wraps an interview failure as the typed Remote error', async () => {
     .rejects.toMatchObject({ code: 'prompt-optimizer/interview-failed', details: { reason: 'no route' } })
 })
 
+const METRICS_SUMMARY = {
+  adopted: 1, rejected: 0, declined: 0, declineOverridden: 0,
+  interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
+  adoptionRate: 1, verifyPassRate: null, rows: 1,
+}
+
+it('forwards a metric report and lists the aggregate unchanged', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const reportMetric = vi.fn(async () => undefined)
+  const listMetrics = vi.fn(async () => METRICS_SUMMARY)
+  ctx.provide('promptOptimizer', { reportMetric, listMetrics } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = { sessionId: 'session-1' as never, kind: 'adopted' as const, provider: 'p', model: 'm' }
+
+  const signal = new AbortController().signal
+  await expect(api.reportMetric(request, signal)).resolves.toBeUndefined()
+  expect(reportMetric).toHaveBeenCalledExactlyOnceWith(request, signal)
+  await expect(api.listMetrics(signal)).resolves.toEqual(METRICS_SUMMARY)
+  expect(listMetrics).toHaveBeenCalledExactlyOnceWith(signal)
+})
+
+it('wraps a metrics failure as the typed Remote error', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  ctx.provide('promptOptimizer', { reportMetric: vi.fn(async () => { throw new Error('no storage') }) } as never)
+  const api = new PromptOptimizerController(ctx)
+
+  await expect(api.reportMetric(
+    { sessionId: 'session-1' as never, kind: 'adopted', provider: 'p', model: 'm' },
+    new AbortController().signal,
+  )).rejects.toMatchObject({ code: 'prompt-optimizer/metrics-failed', details: { reason: 'no storage' } })
+})
+
 const VERIFY_RESULT = { passed: true, exitCode: 0, timedOut: false, output: '$ ls\nok', durationMs: 4 }
 
 it('forwards a verify request to the capability service unchanged', async () => {

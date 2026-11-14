@@ -27,6 +27,12 @@ const REMOTE: TypertRemoteContribution = {
   descriptors: [],
 }
 const SESSION = 'session-1' as SessionId
+/** Zeroed metrics aggregate the default remote stub serves. */
+const EMPTY_METRICS = {
+  adopted: 0, rejected: 0, declined: 0, declineOverridden: 0,
+  interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
+  adoptionRate: null, verifyPassRate: null, rows: 0,
+}
 const RESULT = {
   optimizedText: '优化后的提示词',
   changes: ['补充了输出格式'],
@@ -75,7 +81,13 @@ async function fixture(
         },
   } as never)
   const round = vi.fn(async () => ({ ok: true as const, value: RESULT }))
-  ctx.provide('remote.promptOptimizer', { optimize: optimize ?? round, ...remoteExtra } as never)
+  const reportMetric = vi.fn(async () => ({ ok: true as const, value: undefined }))
+  ctx.provide('remote.promptOptimizer', {
+    optimize: optimize ?? round,
+    reportMetric,
+    listMetrics: vi.fn(async () => ({ ok: true as const, value: { ...EMPTY_METRICS } })),
+    ...remoteExtra,
+  } as never)
   ctx.provide('configForms', {
     get: () => ({
       getSnapshot: () => ({ status: 'loading', value: undefined, base: {}, user: {}, writable: false, revision: 0 }),
@@ -440,6 +452,38 @@ it('falls straight into a plain round when the interview finds nothing to ask', 
     expect(plainRequest).not.toHaveProperty('force')
     expect(plainRequest).not.toHaveProperty('clarifications')
     await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('reports rejected and adopted decisions as local metrics', async () => {
+  const reportMetric = vi.fn(async () => ({ ok: true as const, value: undefined }))
+  const optimize = vi.fn(async () => ({ ok: true as const, value: RESULT }))
+  const b = await fixture(optimize, undefined, true, { reportMetric })
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx)
+
+    actions.start(SESSION, 'draft', () => {})
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+
+    actions.regenerate(SESSION)
+    await vi.waitFor(() => {
+      expect(reportMetric).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'rejected', provider: 'current-route', model: 'current-model' }),
+        expect.any(AbortSignal),
+      )
+    })
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+
+    actions.apply(SESSION)
+    await vi.waitFor(() => {
+      expect(reportMetric).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'adopted', provider: 'current-route', model: 'current-model' }),
+        expect.any(AbortSignal),
+      )
+    })
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }
 })

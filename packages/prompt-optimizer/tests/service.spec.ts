@@ -33,7 +33,7 @@ class RecordingAdapter extends LlmAdapter {
 
 const CONFIG: Config = {
   maxInputBytes: 1_000, maxOutputTokens: 64, timeoutMs: 1_000, verifyTimeoutMs: 2_000,
-  domainPriors: true, skillAware: false, skipCheck: false,
+  domainPriors: true, skillAware: false, skipCheck: false, metrics: false,
 }
 
 /** Committed optimizer LLM-request record payloads in `events`, oldest first. */
@@ -1254,5 +1254,149 @@ describe('PromptOptimizer.interview', () => {
     )
 
     expect(result.questions).toEqual([])
+  })
+})
+
+describe('PromptOptimizer local metrics', () => {
+  /** Row shape of the in-memory metrics table. */
+  interface MetricRow {
+    id: string
+    createdAt: string
+    kind: string
+    provider: string
+    model: string
+    tier: string
+    count: number
+  }
+
+  /** Adapter script + an in-memory metrics table, with metrics enabled. */
+  async function withMetrics(config: Partial<Config> = {}, script: readonly StreamChunk[] = envelope('改写', [])): Promise<{
+    ctx: Context
+    table: Map<string, MetricRow>
+    sessionId: SessionId
+  }> {
+    const table = new Map<string, MetricRow>()
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(LlmRuntime)
+    ctx.llm.registerAdapter(['current-route'], new RecordingAdapter(script))
+    ctx.provide('storageDomain', {
+      open: async () => ({
+        table: () => ({
+          get: (key: string) => table.get(key),
+          put: async (key: string, value: MetricRow) => { table.set(key, value) },
+          delete: async (key: string) => table.delete(key),
+          entries: () => table.entries(),
+        }),
+      }),
+    } as never)
+    await ctx.plugin(PromptOptimizer, { ...CONFIG, metrics: true, ...config })
+    const session = ctx.sessions.create(SessionId('metrics-session'))
+    session.append('request/header', {
+      header: { config: { provider: 'current-route', model: 'current-model' } },
+      reason: 'initial',
+    })
+    return { ctx, table, sessionId: session.id }
+  }
+
+  const kindsOf = (table: Map<string, MetricRow>): readonly string[] => [...table.values()].map(row => row.kind)
+
+  it('records declined and clarified rounds with their routes', async () => {
+    const { ctx, table, sessionId } = await withMetrics({
+      skipCheck: true, provider: 'current-route', model: 'deepseek-reasoner',
+    })
+
+    await ctx.promptOptimizer.optimize({ sessionId, text: '帮我把这个函数改成异步的' }, new AbortController().signal)
+    expect(kindsOf(table)).toEqual(['declined'])
+
+    await ctx.promptOptimizer.optimize(
+      { sessionId, text: '帮我写单片机固件', clarifications: [{ question: '芯片？', answer: 'STM32F103' }] },
+      new AbortController().signal,
+    )
+    expect(kindsOf(table)).toEqual(['declined', 'clarified'])
+    expect([...table.values()][1]).toMatchObject({ provider: 'current-route', model: 'deepseek-reasoner', tier: 'reasoning', count: 1 })
+  })
+
+  it('records interview questions by count', async () => {
+    const { ctx, table, sessionId } = await withMetrics(undefined, [
+      { type: 'block-start', index: 0, blockType: 'text' },
+      {
+        type: 'text-delta', index: 0,
+        text: ['<<<QUESTIONS>>>', 'Q: 芯片？', '- STM32', 'Q: 成功标准？', '- (free text)'].join('\n'),
+      },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ])
+
+    await ctx.promptOptimizer.interview({ sessionId, text: '帮我写固件' }, new AbortController().signal)
+
+    expect(kindsOf(table)).toEqual(['interviewed'])
+    expect([...table.values()][0]).toMatchObject({ count: 2 })
+  })
+
+  it('records verify outcomes with best-effort route provenance', async () => {
+    const { ctx, table, sessionId } = await withMetrics()
+    ctx.provide('shell', shellStub(0, 'ok') as never)
+    ctx.provide('workingDirectory', { get: () => '/tmp/workspace' } as never)
+
+    const result = await ctx.promptOptimizer.verify(
+      { sessionId, criterion: '脚本存在', command: 'ls script.sh' }, new AbortController().signal,
+    )
+
+    expect(result.passed).toBe(true)
+    expect(kindsOf(table)).toEqual(['verify-passed'])
+    expect([...table.values()][0]).toMatchObject({ provider: 'current-route', model: 'current-model' })
+  })
+
+  it('accepts client decision reports and aggregates rates over all rows', async () => {
+    const { ctx, table, sessionId } = await withMetrics()
+
+    await ctx.promptOptimizer.reportMetric(
+      { sessionId, kind: 'adopted', provider: 'current-route', model: 'current-model' }, new AbortController().signal,
+    )
+    await ctx.promptOptimizer.reportMetric(
+      { sessionId, kind: 'adopted', provider: 'current-route', model: 'current-model' }, new AbortController().signal,
+    )
+    await ctx.promptOptimizer.reportMetric(
+      { sessionId, kind: 'rejected', provider: 'current-route', model: 'current-model', tier: 'reasoning' }, new AbortController().signal,
+    )
+
+    expect(table.size).toBe(3)
+    const summary = await ctx.promptOptimizer.listMetrics(new AbortController().signal)
+    expect(summary).toMatchObject({
+      adopted: 2, rejected: 1, declined: 0, declineOverridden: 0,
+      interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
+      adoptionRate: 2 / 3, verifyPassRate: null, rows: 3,
+    })
+  })
+
+  it('rejects host-only kinds and blank routes from the wire', async () => {
+    const { ctx, table, sessionId } = await withMetrics()
+
+    await expect(ctx.promptOptimizer.reportMetric(
+      { sessionId, kind: 'declined', provider: 'p', model: 'm' }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_BAD_METRIC_KIND' })
+    await expect(ctx.promptOptimizer.reportMetric(
+      { sessionId, kind: 'adopted', provider: ' ', model: 'm' }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_BAD_METRIC_ROUTE' })
+    expect(table.size).toBe(0)
+  })
+
+  it('suppresses every write when metrics is off and fails typed without storage', async () => {
+    const { ctx, sessionId } = await withMetrics({ metrics: false })
+
+    await ctx.promptOptimizer.reportMetric(
+      { sessionId, kind: 'adopted', provider: 'p', model: 'm' }, new AbortController().signal,
+    )
+    await ctx.promptOptimizer.optimize({ sessionId, text: '帮我写固件' }, new AbortController().signal)
+    expect(await ctx.promptOptimizer.listMetrics(new AbortController().signal)).toMatchObject({ rows: 0, adoptionRate: null })
+
+    const bare = new Context()
+    onTestFinished(() => bare.fiber.dispose())
+    await bare.plugin(SessionStore)
+    await bare.plugin(LlmRuntime)
+    await bare.plugin(PromptOptimizer, { ...CONFIG, metrics: true })
+    await expect(bare.promptOptimizer.listMetrics(new AbortController().signal))
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_METRICS' })
   })
 })

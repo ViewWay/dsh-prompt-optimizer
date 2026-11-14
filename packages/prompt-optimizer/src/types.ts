@@ -252,3 +252,58 @@ export interface PromptOptimizerSettings {
   /** Role slug applied to every request carrying no explicit `role`; absent for no default. */
   readonly defaultRole?: string
 }
+
+/**
+ * Kind of one local metric row. Host-written kinds record what a round did
+ * (`declined`, `interviewed`, `clarified`, `verify-passed`, `verify-failed`);
+ * the three client-reported kinds record what the user then decided.
+ */
+export type PromptMetricKind =
+  | 'declined'
+  | 'interviewed'
+  | 'clarified'
+  | 'verify-passed'
+  | 'verify-failed'
+  | 'adopted'
+  | 'rejected'
+  | 'decline-overridden'
+
+/** Wire request to record one user-decision metric the host cannot observe itself. */
+export interface PromptMetricReportRequest {
+  /** Session reporting the decision; recorded as provenance. */
+  readonly sessionId: SessionId
+  /** One of `adopted`, `rejected`, `decline-overridden` — the only client-reportable kinds. */
+  readonly kind: PromptMetricKind
+  /** Exact provider route of the round the decision is about. */
+  readonly provider: string
+  /** Exact model id of the round the decision is about. */
+  readonly model: string
+  /** Capability tier of that route; absent stores `standard`. */
+  readonly tier?: ModelTier
+}
+
+/** Aggregate over the persisted metric rows; the client renders it as the local-metrics card. */
+export interface PromptMetricsSummary {
+  /** Rounds whose result the user applied to the draft. */
+  readonly adopted: number
+  /** Rounds whose result the user rejected by rerunning. */
+  readonly rejected: number
+  /** Rounds the decline precheck talked the user out of. */
+  readonly declined: number
+  /** Declines the user overrode with Optimize anyway. */
+  readonly declineOverridden: number
+  /** Clarifying questions all interview rounds asked. */
+  readonly interviewQuestions: number
+  /** Rewrite rounds that carried interview answers. */
+  readonly clarifiedRounds: number
+  /** Acceptance-check commands that exited 0. */
+  readonly verifyPassed: number
+  /** Acceptance-check commands that exited nonzero, timed out, or died. */
+  readonly verifyFailed: number
+  /** `adopted / (adopted + rejected)` over the aggregated rows; null before either kind exists. */
+  readonly adoptionRate: number | null
+  /** `verifyPassed / (verifyPassed + verifyFailed)`; null before either kind exists. */
+  readonly verifyPassRate: number | null
+  /** Metric rows the aggregate considered, oldest dropped first. */
+  readonly rows: number
+}

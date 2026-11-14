@@ -10,6 +10,8 @@ import type {
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
+  PromptMetricReportRequest,
+  PromptMetricsSummary,
   PromptOptimizeRequest,
   PromptOptimizeResult,
   PromptRoleEvolveRequest,
@@ -26,10 +28,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     deletePrompt: (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     evolveRole: (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
     interview: (request: PromptInterviewRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptInterviewResult>>
+    listMetrics: (signal?: AbortSignal) => Promise<RemoteResult<PromptMetricsSummary>>
     listPrompts: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     listRoles: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
     optimize: (request: PromptOptimizeRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptOptimizeResult>>
     recommendRoles: (request: PromptRoleRecommendRequest, signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleRecommendation[]>>
+    reportMetric: (request: PromptMetricReportRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     savePrompt: (request: PromptLibrarySaveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptLibraryEntry>>
     verify: (request: PromptVerifyRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptVerifyResult>>
   }
@@ -37,10 +41,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'promptOptimizer/deletePrompt': (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     'promptOptimizer/evolveRole': (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
     'promptOptimizer/interview': (request: PromptInterviewRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptInterviewResult>>
+    'promptOptimizer/listMetrics': (signal?: AbortSignal) => Promise<RemoteResult<PromptMetricsSummary>>
     'promptOptimizer/listPrompts': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     'promptOptimizer/listRoles': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
     'promptOptimizer/optimize': (request: PromptOptimizeRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptOptimizeResult>>
     'promptOptimizer/recommendRoles': (request: PromptRoleRecommendRequest, signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleRecommendation[]>>
+    'promptOptimizer/reportMetric': (request: PromptMetricReportRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     'promptOptimizer/savePrompt': (request: PromptLibrarySaveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptLibraryEntry>>
     'promptOptimizer/verify': (request: PromptVerifyRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptVerifyResult>>
   }
@@ -168,6 +174,30 @@ const _recommendRoles_result = () => (_recommendRoles_result$value ??= z.array(z
   'score': z.number().readonly().describe('Deterministic keyword-overlap score against the request context.'),
   'matched': z.array(z.string()).readonly().describe('Context tokens that matched this role, most valuable first.'),
 })))
+let _reportMetric_parameter_0$value
+const _reportMetric_parameter_0 = () => (_reportMetric_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session reporting the decision; recorded as provenance.'),
+  'kind': z.union([z.literal('adopted'), z.literal('rejected'), z.literal('decline-overridden')]).readonly().describe('One of `adopted`, `rejected`, `decline-overridden` — the only client-reportable kinds.'),
+  'provider': z.string().readonly().describe('Exact provider route of the round the decision is about.'),
+  'model': z.string().readonly().describe('Exact model id of the round the decision is about.'),
+  'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional().describe('Capability tier of that route; absent stores `standard`.'),
+}))
+let _reportMetric_result$value
+const _reportMetric_result = () => (_reportMetric_result$value ??= z.void())
+let _listMetrics_result$value
+const _listMetrics_result = () => (_listMetrics_result$value ??= z.object({
+  'adopted': z.number().readonly().describe('Rounds whose result the user applied to the draft.'),
+  'rejected': z.number().readonly().describe('Rounds whose result the user rejected by rerunning.'),
+  'declined': z.number().readonly().describe('Rounds the decline precheck talked the user out of.'),
+  'declineOverridden': z.number().readonly().describe('Declines the user overrode with Optimize anyway.'),
+  'interviewQuestions': z.number().readonly().describe('Clarifying questions all interview rounds asked.'),
+  'clarifiedRounds': z.number().readonly().describe('Rewrite rounds that carried interview answers.'),
+  'verifyPassed': z.number().readonly().describe('Acceptance-check commands that exited 0.'),
+  'verifyFailed': z.number().readonly().describe('Acceptance-check commands that exited nonzero, timed out, or died.'),
+  'adoptionRate': z.number().readonly().nullable().describe('`adopted / (adopted + rejected)` over the aggregated rows; null before either kind exists.'),
+  'verifyPassRate': z.number().readonly().nullable().describe('`verifyPassed / (verifyPassed + verifyFailed)`; null before either kind exists.'),
+  'rows': z.number().readonly().describe('Metric rows the aggregate considered, oldest dropped first.'),
+}))
 let _savePrompt_parameter_0$value
 const _savePrompt_parameter_0 = () => (_savePrompt_parameter_0$value ??= z.object({
   'sessionId': z.string().readonly().describe('Session that produced the entry; recorded as provenance.'),
@@ -228,6 +258,14 @@ let _recommendRoles_parameter_0_strict$value
 const _recommendRoles_parameter_0_strict = () => (_recommendRoles_parameter_0_strict$value ??= z.strictObject({
   'sessionId': z.string().readonly(),
   'text': z.string().readonly().optional(),
+}))
+let _reportMetric_parameter_0_strict$value
+const _reportMetric_parameter_0_strict = () => (_reportMetric_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+  'kind': z.union([z.literal('adopted'), z.literal('rejected'), z.literal('decline-overridden')]).readonly(),
+  'provider': z.string().readonly(),
+  'model': z.string().readonly(),
+  'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional(),
 }))
 let _savePrompt_parameter_0_strict$value
 const _savePrompt_parameter_0_strict = () => (_savePrompt_parameter_0_strict$value ??= z.strictObject({
@@ -343,6 +381,21 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 63, column: 9 },
     },
+    'promptOptimizer/listMetrics': {
+      service: 'promptOptimizerController',
+      description: 'Aggregate the persisted local metrics for the settings card.',
+      invocation: { kind: 'direct' },
+      parameters: [],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptMetricsSummary',
+        create: _listMetrics_result,
+        description: 'decision counts, question totals, and adoption/verify rates.',
+        jsonSchema: { type: 'object', properties: { adopted: { type: 'number' }, rejected: { type: 'number' }, declined: { type: 'number' }, declineOverridden: { type: 'number' }, interviewQuestions: { type: 'number' }, clarifiedRounds: { type: 'number' }, verifyPassed: { type: 'number' }, verifyFailed: { type: 'number' }, adoptionRate: { type: ['number', 'null'] }, verifyPassRate: { type: ['number', 'null'] }, rows: { type: 'number' } }, required: ['adopted', 'rejected', 'declined', 'declineOverridden', 'interviewQuestions', 'clarifiedRounds', 'verifyPassed', 'verifyFailed', 'adoptionRate', 'verifyPassRate', 'rows'], additionalProperties: true },
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 99, column: 9 },
+    },
     'promptOptimizer/listPrompts': {
       service: 'promptOptimizerController',
       description: 'List the prompt library\'s most recent entries, newest first.',
@@ -438,6 +491,38 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         jsonSchema: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, score: { type: 'number' }, matched: { type: 'array', items: { type: 'string' } } }, required: ['id', 'name', 'score', 'matched'], additionalProperties: true } },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 131, column: 9 },
+    },
+    'promptOptimizer/reportMetric': {
+      service: 'promptOptimizerController',
+      description: 'Record one user-decision metric the host cannot observe itself.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'session, decision kind, and the round\'s route.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptMetricReportRequest',
+            create: _reportMetric_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, kind: { type: 'string', enum: ['adopted', 'rejected', 'decline-overridden'] }, provider: { type: 'string' }, model: { type: 'string' }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] } }, required: ['sessionId', 'kind', 'provider', 'model'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptMetricReportRequest',
+            create: _reportMetric_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, kind: { type: 'string', enum: ['adopted', 'rejected', 'decline-overridden'] }, provider: { type: 'string' }, model: { type: 'string' }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] } }, required: ['sessionId', 'kind', 'provider', 'model'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptMetricReportRequest:void',
+        create: _reportMetric_result,
+        jsonSchemaError: 'typert tool schema: unsupported void value',
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 82, column: 9 },
     },
     'promptOptimizer/savePrompt': {
       service: 'promptOptimizerController',

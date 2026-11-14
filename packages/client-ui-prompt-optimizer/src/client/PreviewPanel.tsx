@@ -40,6 +40,8 @@ export interface PreviewPanelActions {
   regenerate: (sessionId: PromptOptimizationPreview['sessionId']) => void
   /** Re-run the same draft through the system-prompt critique loop. */
   regenerateAsSystem: (sessionId: PromptOptimizationPreview['sessionId']) => void
+  /** Re-run after overriding a decline: reports the override, then reruns with force. */
+  regenerateForced: (sessionId: PromptOptimizationPreview['sessionId']) => void
   /** Re-run the same draft styled as one role; undefined returns to a generic rewrite.
    * @param sessionId - Session whose preview is open.
    * @param role - role slug to style the round with, or undefined for no role.
@@ -173,7 +175,7 @@ const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, er
 
 /** Render one Session's optimization preview in the composer seat. */
 export function PreviewPanel(props: PreviewPanelProps) {
-  const { matched, apply, regenerate, regenerateAsSystem, regenerateAsRole, regenerateWithDirection, cancel, loadRoles } = props
+  const { matched, apply, regenerate, regenerateAsSystem, regenerateForced, regenerateAsRole, regenerateWithDirection, cancel, loadRoles } = props
   const { verifyCheck, saveToLibrary, evolveRole, reInterview, answerInterview, submitInterview, skipInterview, useOptimization, t } = props
   const state = useOptimization(snapshot => snapshot[matched.sessionId])
   const [rolesRevision, setRolesRevision] = useState(0)
@@ -392,7 +394,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             <div className={css.critiqueActions}>
               <Button
                 size="sm" type="button"
-                onClick={() => { regenerate(matched.sessionId) }}
+                onClick={() => { regenerateForced(matched.sessionId) }}
                 data-testid="skip-force"
               >
                 {t('skipForce')}

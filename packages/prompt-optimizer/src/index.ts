@@ -41,6 +41,9 @@ import type {
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
+  PromptMetricKind,
+  PromptMetricReportRequest,
+  PromptMetricsSummary,
   PromptOptimizeDirection,
   PromptOptimizeRequest,
   PromptOptimizeResult,
@@ -206,6 +209,8 @@ export interface Config {
   readonly skillAware: boolean
   /** Whether the decline-to-optimize precheck may skip rounds it cannot improve. */
   readonly skipCheck: boolean
+  /** Whether local optimization metrics are recorded and aggregated. */
+  readonly metrics: boolean
 }
 
 /** Longest check command accepted by {@link PromptOptimizer.verify}. */
@@ -222,6 +227,12 @@ const LIBRARY_MAX_ENTRIES = 100
 const MAX_PREVIOUS_ATTEMPTS = 5
 /** Most interview answers one optimize request may carry. */
 const MAX_CLARIFICATIONS = 6
+/** Metric kinds a client may report; host-written kinds are never accepted from the wire. */
+const CLIENT_METRIC_KINDS: readonly PromptMetricKind[] = ['adopted', 'rejected', 'decline-overridden']
+/** Most metric rows kept on disk; the oldest beyond the cap are pruned on write. */
+const METRICS_MAX_ROWS = 2_000
+/** Most metric rows one summary aggregates over, newest first. */
+const METRICS_AGGREGATE_ROWS = 1_000
 /** Every rewrite direction a request may steer a round toward. */
 const DIRECTIONS: readonly PromptOptimizeDirection[] = ['concise', 'detailed', 'technical', 'structured', 'acceptance']
 /** Slug shape a role id must have before the directory listing is consulted. */
@@ -250,6 +261,37 @@ interface LibraryRow {
   createdAt: string
   sourceSessionId: string
 }
+
+/** Persisted metric row; the storage schema validates this plain shape. */
+interface MetricRow {
+  id: string
+  createdAt: string
+  kind: string
+  provider: string
+  model: string
+  tier: string
+  count: number
+}
+
+/**
+ * Local optimization metrics: append-only outcome rows (never draft content)
+ * in their own domain so the library schema never migrates underneath them.
+ */
+const metricsDomainSpec = defineDomain({
+  name: 'prompt_optimizer_metrics',
+  version: 1,
+  tables: {
+    metrics: domainTable<string, MetricRow>(zod.object({
+      id: zod.string(),
+      createdAt: zod.string(),
+      kind: zod.string(),
+      provider: zod.string(),
+      model: zod.string(),
+      tier: zod.string(),
+      count: zod.number(),
+    })),
+  },
+})
 
 /** Durable prompt library: adopted optimization results keyed by their id. */
 const libraryDomainSpec = defineDomain({
@@ -531,6 +573,7 @@ export default class PromptOptimizer extends Service {
     defaultRole: z.string(),
     skillAware: z.boolean().default(true),
     skipCheck: z.boolean().default(true),
+    metrics: z.boolean().default(true),
   })
 
   constructor(ctx: Context, private readonly config: Config) {
@@ -682,6 +725,7 @@ export default class PromptOptimizer extends Service {
           target,
           inputBytes,
         })
+        await this.recordMetric('declined', route, tier, 1)
         return {
           optimizedText: request.text,
           changes: [],
@@ -695,6 +739,9 @@ export default class PromptOptimizer extends Service {
       }
     }
     const language = normalizeLanguage(request.language)
+    if (clarifications.length > 0) {
+      await this.recordMetric('clarified', route, tier, clarifications.length)
+    }
     const rankingContext = [request.text, this.inboxText(session)].filter(part => part !== '').join('\n')
     const skills = await this.resolveSkillHints(session, rankingContext, signal)
     signal.throwIfAborted()
@@ -831,6 +878,7 @@ export default class PromptOptimizer extends Service {
       inputBytes,
       questions: questions.length,
     })
+    await this.recordMetric('interviewed', route, tier, questions.length)
     return {
       questions,
       provider: route.provider,
@@ -903,6 +951,12 @@ export default class PromptOptimizer extends Service {
       durationMs: Date.now() - started,
     }
     appendPluginRecord(session, 'plugin:prompt-optimizer/verify', { criterion: request.criterion, command, ...verified })
+    // Verify outcomes are model-independent; the route is best-effort provenance only.
+    let verifyRoute = { provider: '', model: '' }
+    try {
+      verifyRoute = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+    } catch { /* no route resolves: the metric degrades to a blank route */ }
+    await this.recordMetric(verified.passed ? 'verify-passed' : 'verify-failed', verifyRoute, 'standard', 1)
     return verified
   }
 
@@ -1324,6 +1378,118 @@ export default class PromptOptimizer extends Service {
     }
     this.library ??= domains.open(libraryDomainSpec)
     return this.library
+  }
+
+  /** Metrics domain handle, opened once on first use. */
+  private metrics: Promise<Domain<typeof metricsDomainSpec>> | undefined
+
+  /**
+   * Open the metrics domain once, failing loudly when the deployment composed
+   * no storage-domain service.
+   * @returns the opened domain shared by every metrics call.
+   */
+  private openMetrics(): Promise<Domain<typeof metricsDomainSpec>> {
+    const domains = this.ctx.get('storageDomain')
+    if (domains === undefined) {
+      fail('PROMPT_OPTIMIZER_NO_METRICS', 'prompt-optimizer: no storage-domain service is composed; add dsh-storage-domain to persist local metrics')
+    }
+    this.metrics ??= domains.open(metricsDomainSpec)
+    return this.metrics
+  }
+
+  /**
+   * Append one row to the metrics table, then prune the oldest rows beyond
+   * {@link METRICS_MAX_ROWS} so the append-only table stays bounded.
+   * @param kind - metric kind of the row.
+   * @param provider - route key the row is about.
+   * @param model - model id the row is about.
+   * @param tier - capability tier of that route.
+   * @param count - magnitude the row carries (questions asked, answers used; 1 for events).
+   */
+  private async appendMetric(kind: PromptMetricKind, provider: string, model: string, tier: ModelTier, count: number): Promise<void> {
+    const table = (await this.openMetrics()).table('metrics')
+    const id = randomUUID()
+    await table.put(id, { id, createdAt: new Date().toISOString(), kind, provider, model, tier, count })
+    const entries = [...table.entries()].sort((left, right) => left[1].createdAt.localeCompare(right[1].createdAt))
+    const excess = entries.length - METRICS_MAX_ROWS
+    for (let index = 0; index < excess; index += 1) {
+      await table.delete(entries[index]![0])
+    }
+  }
+
+  /**
+   * Record one host-observed metric. Best-effort by design: a storage failure
+   * degrades to a warning and never fails the round it observes.
+   * @param kind - metric kind to record.
+   * @param route - route the observed round ran on.
+   * @param tier - capability tier of that route.
+   * @param count - magnitude the row carries.
+   */
+  private async recordMetric(kind: PromptMetricKind, route: { readonly provider: string; readonly model: string }, tier: ModelTier, count: number): Promise<void> {
+    if (!this.config.metrics) return
+    try {
+      await this.appendMetric(kind, route.provider, route.model, tier, count)
+    } catch (error) {
+      this.ctx.logger.warn(`prompt optimizer: recording a ${kind} metric failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * Record one user-decision metric the host cannot observe itself: the
+   * client reports `adopted`, `rejected`, and `decline-overridden` outcomes
+   * for rounds it watched.
+   * @param request - session, kind, and the round's route.
+   * @param signal - caller cancellation.
+   * @throws when the kind is not client-reportable or the route is blank.
+   */
+  async reportMetric(request: PromptMetricReportRequest, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    if (!CLIENT_METRIC_KINDS.includes(request.kind)) {
+      fail('PROMPT_OPTIMIZER_BAD_METRIC_KIND', `prompt-optimizer: clients may only report ${CLIENT_METRIC_KINDS.join(', ')}, not "${request.kind}"`)
+    }
+    if (request.provider.trim() === '' || request.model.trim() === '') {
+      fail('PROMPT_OPTIMIZER_BAD_METRIC_ROUTE', 'prompt-optimizer: a reported metric needs the round\'s provider and model')
+    }
+    if (!this.config.metrics) return
+    await this.appendMetric(request.kind, request.provider, request.model, request.tier ?? 'standard', 1)
+    signal.throwIfAborted()
+  }
+
+  /**
+   * Aggregate the persisted metric rows into the summary the settings page
+   * renders: decision counts, question totals, and the two rates that say
+   * whether the optimizer is actually helping.
+   * @param signal - caller cancellation.
+   * @returns the aggregate over the most recent {@link METRICS_AGGREGATE_ROWS}
+   * rows; rates are null before their inputs exist.
+   */
+  async listMetrics(signal: AbortSignal): Promise<PromptMetricsSummary> {
+    signal.throwIfAborted()
+    const rows = [...(await this.openMetrics()).table('metrics').entries()]
+      .map(([, row]) => row)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, METRICS_AGGREGATE_ROWS)
+    const rowsOf = (kind: PromptMetricKind): number => rows.reduce((total, row) => row.kind === kind ? total + 1 : total, 0)
+    const sumOf = (kind: PromptMetricKind): number => rows.reduce((total, row) => row.kind === kind ? total + row.count : total, 0)
+    const adopted = rowsOf('adopted')
+    const rejected = rowsOf('rejected')
+    const verifyPassed = rowsOf('verify-passed')
+    const verifyFailed = rowsOf('verify-failed')
+    const decided = adopted + rejected
+    const verified = verifyPassed + verifyFailed
+    return {
+      adopted,
+      rejected,
+      declined: rowsOf('declined'),
+      declineOverridden: rowsOf('decline-overridden'),
+      interviewQuestions: sumOf('interviewed'),
+      clarifiedRounds: rowsOf('clarified'),
+      verifyPassed,
+      verifyFailed,
+      adoptionRate: decided === 0 ? null : adopted / decided,
+      verifyPassRate: verified === 0 ? null : verifyPassed / verified,
+      rows: rows.length,
+    }
   }
 }
 

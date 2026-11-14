@@ -15,6 +15,7 @@ A standalone, independently distributed plugin family for the DeepSeek Harness t
 - **Model-tier awareness**: the rewrite conditions on the resolved route's capability tier — reasoning models get scaffolding-free, specification-dense rewrites; small local models behind LiteLLM/vLLM/Ollama get every invariant spelled out
 - **Decline to optimize** (`skipCheck`): a short, clear, generic draft on a reasoning model is declined with an explanation instead of rewritten — the honest "this is better sent as is"; any explicit rerun still dispatches
 - **Intent interview** (clarify-first): a `?` trigger on the input row asks up to three domain-conditioned clarifying questions with clickable candidates before rewriting; the answers ride into the round as authoritative requirements and survive every rerun — "nothing worth asking" falls straight through to the plain round
+- **Local metrics** (`metrics`): every round's outcome is counted locally — adoption rate, verify pass rate, declines and overrides, interview questions — and rendered on the settings page; rows carry the route and timestamp only, never draft content
 - **Prompt library**: save any result with one click; the library button on the input row opens a management panel — browse, expand, insert into the draft, re-optimize from a stored entry, or delete with a two-step confirm (newest first)
 - **Output language follows the agent UI language**: a Chinese interface yields Chinese prompts, English yields English, while code identifiers, paths and commands stay verbatim
 - Inline **Optimize** entry on queued (unsent) conversation items
@@ -81,6 +82,7 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 | `defaultRole` | unset | Default role slug when none is specified; also settable in the settings page |
 | `skillAware` | `true` | Fold matched installed skills into the meta-prompt |
 | `skipCheck` | `true` | Let the decline-to-optimize precheck skip rounds it cannot improve |
+| `metrics` | `true` | Record local outcome metrics (adoption, verify, declines, interviews) for the settings card |
 
 ## Privacy
 
@@ -89,6 +91,7 @@ Optimization runs are recorded in the session's own event log; treat drafts acco
 - Every optimization round appends a `plugin:prompt-optimizer/llm-request` record containing the full draft text and the auxiliary system prompt.
 - Every check run appends a `plugin:prompt-optimizer/verify` record containing the executed command and its (redacted) output.
 - A declined round appends a `plugin:prompt-optimizer/skipped` record containing the stable skip reason and the draft's byte size.
+- Local metrics store one row per outcome (kind, route, tier, timestamp, count) in their own storage domain — never draft or result text.
 - "Improve this role" rewrites the role definition file `<slug>.md` under the configured `rolesDir` on disk; the previous version is kept alongside it as `<slug>.md.bak`. The bundled default catalog is read-only: configure `rolesDir` to enable role evolution.
 
 If you paste secrets into a draft, expect them to appear in the session log.

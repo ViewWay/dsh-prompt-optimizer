@@ -13,6 +13,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   PromptClarification,
   PromptLibraryEntry,
+  PromptMetricsSummary,
   PromptOptimizeDirection,
   PromptOptimizeTarget,
   PromptOptimizerSettings as PromptOptimizerSettingsSection,
@@ -101,6 +102,21 @@ function registerUi(ctx: Context): void {
     previews.get(sessionId)?.()
     previews.delete(sessionId)
     store.update((draft) => { Reflect.deleteProperty(draft, sessionId) })
+  }
+
+  /** Report one user-decision metric; fire-and-forget — telemetry never blocks a click. */
+  const reportOutcome = (
+    sessionId: SessionId,
+    kind: 'adopted' | 'rejected' | 'decline-overridden',
+    result: { readonly provider: string; readonly model: string; readonly tier?: string } | undefined,
+  ): void => {
+    if (result === undefined) return
+    void ctx.remote.promptOptimizer.reportMetric(
+      { sessionId, kind, provider: result.provider, model: result.model, ...(result.tier !== undefined ? { tier: result.tier as never } : {}) },
+      new AbortController().signal,
+    ).catch((error: unknown) => {
+      ctx.logger.warn(`prompt optimizer: reporting the ${kind} metric failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
   }
 
   /** Close one Session's library panel and drop its registered draft insert. */
@@ -259,6 +275,10 @@ function registerUi(ctx: Context): void {
     const state = store.getSnapshot()[sessionId]
     if (state === undefined || (state.queueItemId === undefined && state.apply === undefined)) return
     // An explicit rerun means the user asked for a rewrite: force past the decline precheck.
+    // A finished result the rerun discards counts as rejected; a declined round never does.
+    if (state.result !== undefined && state.result.skipped !== true) {
+      reportOutcome(sessionId, 'rejected', state.result)
+    }
     const rejected = state.result === undefined ? state.previousAttempts : [...state.previousAttempts, state.result.optimizedText]
     runRound(sessionId, {
       draft: state.draft, previousAttempts: rejected, apply: state.apply ?? (() => {}), target,
@@ -280,6 +300,7 @@ function registerUi(ctx: Context): void {
     apply: (sessionId: SessionId): void => {
       const state = store.getSnapshot()[sessionId]
       if (state?.phase !== 'ready' || state.result === undefined) return
+      reportOutcome(sessionId, 'adopted', state.result)
       if (state.queueItemId === undefined) {
         state.apply?.(state.result.optimizedText)
         dismiss(sessionId)
@@ -305,6 +326,14 @@ function registerUi(ctx: Context): void {
     regenerate: (sessionId: SessionId): void => {
       const state = store.getSnapshot()[sessionId]
       if (state === undefined) return
+      rerun(sessionId, 'draft', state.role)
+    },
+    regenerateForced: (sessionId: SessionId): void => {
+      const state = store.getSnapshot()[sessionId]
+      if (state === undefined) return
+      if (state.result?.skipped === true) {
+        reportOutcome(sessionId, 'decline-overridden', state.result)
+      }
       rerun(sessionId, 'draft', state.role)
     },
     regenerateAsSystem: (sessionId: SessionId): void => {
@@ -372,6 +401,11 @@ function registerUi(ctx: Context): void {
     },
     loadRoles: async (): Promise<readonly PromptRoleSummary[]> => {
       const result = await ctx.remote.promptOptimizer.listRoles(new AbortController().signal)
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
+    },
+    loadMetrics: async (): Promise<PromptMetricsSummary> => {
+      const result = await ctx.remote.promptOptimizer.listMetrics(new AbortController().signal)
       if (!result.ok) throw new Error(result.error.message)
       return result.value
     },
@@ -478,7 +512,7 @@ function registerUi(ctx: Context): void {
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register(
     {
       name: 'plugins.bundle.config', key: '@yimiliya/dsh-prompt-optimizer-bundle',
-      locale: NS, inject: () => ({ ...settingsForm.inject(), loadRoles: actions.loadRoles, queueEntryUnavailable }),
+      locale: NS, inject: () => ({ ...settingsForm.inject(), loadRoles: actions.loadRoles, loadMetrics: actions.loadMetrics, queueEntryUnavailable }),
     },
     PromptOptimizerSettings,
   ))
