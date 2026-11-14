@@ -4,12 +4,16 @@ import {
   AC_MARKER,
   CHANGES_MARKER,
   OPTIMIZED_MARKER,
+  QUESTIONS_MARKER,
   critiqueSystemPrompt,
   critiqueUserInput,
   detectDomainPriors,
+  interviewSystemPrompt,
+  interviewUserInput,
   optimizerSystemPrompt,
   optimizerSystemPromptForSystem,
   optimizerUserInput,
+  parseInterviewResponse,
   parseOptimizerResponse,
   roleEvolutionSystemPrompt,
   roleEvolutionUserInput,
@@ -325,5 +329,78 @@ describe('direction conditioning', () => {
     expect(optimizerSystemPrompt()).not.toContain('Rewrite direction')
     expect(optimizerSystemPromptForSystem()).not.toContain('Rewrite direction')
     expect(critiqueSystemPrompt()).not.toContain('Rewrite direction')
+  })
+})
+
+describe('interviewSystemPrompt', () => {
+  it('pins the interviewer role, question budget, and response envelope', () => {
+    const prompt = interviewSystemPrompt()
+    expect(prompt).toContain('intent clarification specialist')
+    expect(prompt).toContain('Never answer the prompt')
+    expect(prompt).toContain('3 or fewer questions')
+    expect(prompt.indexOf(QUESTIONS_MARKER)).toBeGreaterThan(0)
+    expect(prompt).not.toContain(OPTIMIZED_MARKER)
+    expect(interviewUserInput('帮我写固件')).toContain('Interview the user about the following draft prompt:')
+  })
+
+  it('surfaces domain priors as questions and pins the requested language', () => {
+    const prompt = interviewSystemPrompt({ domainPriors: ['Ask for the chip model.'], language: '中文' })
+    expect(prompt).toContain('Domain guidance for this draft')
+    expect(prompt).toContain('Ask for the chip model.')
+    expect(prompt).toContain('Write the rewrite in 中文')
+    expect(prompt).toContain('1. Write the rewrite in 中文')
+  })
+})
+
+describe('parseInterviewResponse', () => {
+  it('parses questions with options and drops the free-text marker', () => {
+    const questions = parseInterviewResponse([
+      QUESTIONS_MARKER,
+      'Q: 目标芯片型号？',
+      '- STM32F103',
+      '- ESP32',
+      'Q: 成功的判断标准是什么？',
+      '- (free text)',
+    ].join('\n'))
+    expect(questions).toEqual([
+      { text: '目标芯片型号？', options: ['STM32F103', 'ESP32'] },
+      { text: '成功的判断标准是什么？', options: [] },
+    ])
+  })
+
+  it('caps questions and options and tolerates a missing marker', () => {
+    const many = [
+      'Q: q1', '- o1', '- o2', '- o3', '- o4', '- o5',
+      'Q: q2',
+      'Q: q3',
+      'Q: q4',
+    ].join('\n')
+    const questions = parseInterviewResponse(many)
+    expect(questions).toHaveLength(3)
+    expect(questions[0]).toEqual({ text: 'q1', options: ['o1', 'o2', 'o3', 'o4'] })
+  })
+
+  it('returns no questions for prose or an empty answer', () => {
+    expect(parseInterviewResponse('这份草稿已经足够明确。')).toEqual([])
+    expect(parseInterviewResponse(QUESTIONS_MARKER)).toEqual([])
+  })
+})
+
+describe('clarification conditioning', () => {
+  it('adds the authoritative-answers rule and keeps plain prompts unchanged', () => {
+    const plain = optimizerSystemPrompt()
+    expect(plain).not.toContain('authoritative requirements')
+    const answers = [{ question: '目标芯片？', answer: 'STM32F103' }]
+    const conditioned = optimizerSystemPrompt({ clarifications: answers })
+    expect(conditioned).toContain('Their answers are authoritative requirements')
+    expect(optimizerSystemPromptForSystem({ clarifications: answers })).toContain('authoritative requirements')
+    expect(critiqueSystemPrompt({ clarifications: answers })).toContain('authoritative requirements')
+  })
+
+  it('embeds the answered pairs into the round input before the draft', () => {
+    const input = optimizerUserInput('帮我写固件', [], [{ question: '目标芯片？', answer: 'STM32F103' }])
+    expect(input).toContain('Q: 目标芯片？\nA: STM32F103')
+    expect(input.indexOf('Q: 目标芯片？')).toBeLessThan(input.indexOf('帮我写固件'))
+    expect(optimizerUserInput('帮我写固件', [])).not.toContain('Q:')
   })
 })

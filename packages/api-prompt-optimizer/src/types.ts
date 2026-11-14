@@ -11,6 +11,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   interface RemoteErrorDetailsMap {
     /** One optimization round failed; `reason` names the typed service failure. */
     'prompt-optimizer/optimization-failed': { readonly reason: string }
+    /** One intent-clarification interview round failed; `reason` names the typed service failure. */
+    'prompt-optimizer/interview-failed': { readonly reason: string }
     /** One acceptance-criterion check command failed to run; `reason` names the typed service failure. */
     'prompt-optimizer/verify-failed': { readonly reason: string }
     /** One acceptance-criterion check command was rejected by the host safety policy; `reason` names the matched deny rule. */
@@ -26,6 +28,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 
 export type {
   ModelTier,
+  PromptClarification,
+  PromptInterviewQuestion,
+  PromptInterviewRequest,
+  PromptInterviewResult,
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,

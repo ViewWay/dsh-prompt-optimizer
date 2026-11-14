@@ -5,6 +5,8 @@ import { z } from 'zod'
 import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-info'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
+  PromptInterviewRequest,
+  PromptInterviewResult,
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
@@ -23,6 +25,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace$70726f6d70744f7074696d697a6572 {
     deletePrompt: (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     evolveRole: (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
+    interview: (request: PromptInterviewRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptInterviewResult>>
     listPrompts: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     listRoles: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
     optimize: (request: PromptOptimizeRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptOptimizeResult>>
@@ -33,6 +36,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteMap {
     'promptOptimizer/deletePrompt': (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     'promptOptimizer/evolveRole': (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
+    'promptOptimizer/interview': (request: PromptInterviewRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptInterviewResult>>
     'promptOptimizer/listPrompts': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     'promptOptimizer/listRoles': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
     'promptOptimizer/optimize': (request: PromptOptimizeRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptOptimizeResult>>
@@ -80,6 +84,36 @@ const _evolveRole_result = () => (_evolveRole_result$value ??= z.object({
   'bytes': z.number().readonly().describe('UTF-8 byte size of the previewed or written definition.'),
   'pendingDefinition': z.string().readonly().optional().describe('The previewed definition awaiting confirmation; present only on preview results.'),
 }))
+let _interview_parameter_0$value
+const _interview_parameter_0 = () => (_interview_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session whose draft is being interviewed; owns the request log and route fallback.'),
+  'text': z.string().readonly().describe('Complete current draft text, exactly as the composer holds it.'),
+  'language': z.string().readonly().optional().describe('Self-describing name of the language the questions must be written in (for example `中文`); absent keeps the draft\'s language.'),
+}))
+let _interview_result$value
+const _interview_result = () => (_interview_result$value ??= z.object({
+  'questions': z.array(z.object({
+    'text': z.string().readonly().describe('Question text in the draft\'s language, answerable by the user in one click or a short sentence.'),
+    'options': z.array(z.string()).readonly().describe('Up to four short concrete candidate answers; empty when the question needs free text.'),
+  })).readonly().describe('Parsed clarifying questions; empty when the model found nothing worth asking.'),
+  'provider': z.string().readonly().describe('Exact provider route that produced the questions.'),
+  'model': z.string().readonly().describe('Exact model id that produced the questions.'),
+  'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional().describe('Capability tier of the route that produced the questions.'),
+  'usage': z.object({
+    'inputTokens': z.number(),
+    'outputTokens': z.number(),
+    'totalTokens': z.number().optional(),
+    'cacheReadTokens': z.number().optional(),
+    'cacheWriteTokens': z.number().optional(),
+    'reasoningTokens': z.number().optional(),
+  }).readonly().optional().describe('Usage from the stream\'s `usage` chunk; absent until one arrives.'),
+}))
+let _interview_parameter_0_strict$value
+const _interview_parameter_0_strict = () => (_interview_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+  'text': z.string().readonly(),
+  'language': z.string().readonly().optional(),
+}))
 let _optimize_parameter_0$value
 const _optimize_parameter_0 = () => (_optimize_parameter_0$value ??= z.object({
   'sessionId': z.string().readonly().describe('Session whose draft is being optimized; owns the request log and route fallback.'),
@@ -90,6 +124,10 @@ const _optimize_parameter_0 = () => (_optimize_parameter_0$value ??= z.object({
   'language': z.string().readonly().optional().describe('Self-describing name of the language the rewrite must be written in (for example `中文`); absent keeps the draft\'s language.'),
   'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional().describe('Direction the next rewrite should push toward; absent applies the plain rules.'),
   'force': z.boolean().readonly().optional().describe('True bypasses the decline-to-optimize precheck and forces a rewrite round.'),
+  'clarifications': z.array(z.object({
+    'question': z.string().readonly().describe('The question text exactly as the interview round asked it.'),
+    'answer': z.string().readonly().describe('The user\'s answer, verbatim.'),
+  })).readonly().optional().describe('Interview answers to fold into the rewrite as first-class requirements; absent for a plain round.'),
 }))
 let _optimize_result$value
 const _optimize_result = () => (_optimize_result$value ??= z.object({
@@ -181,6 +219,10 @@ const _optimize_parameter_0_strict = () => (_optimize_parameter_0_strict$value ?
   'language': z.string().readonly().optional(),
   'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional(),
   'force': z.boolean().readonly().optional(),
+  'clarifications': z.array(z.object({
+    'question': z.string().readonly(),
+    'answer': z.string().readonly(),
+  })).readonly().optional(),
 }))
 let _recommendRoles_parameter_0_strict$value
 const _recommendRoles_parameter_0_strict = () => (_recommendRoles_parameter_0_strict$value ??= z.strictObject({
@@ -268,6 +310,39 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 149, column: 9 },
     },
+    'promptOptimizer/interview': {
+      service: 'promptOptimizerController',
+      description: 'Interview the user about one draft through the capability service.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'session, draft text, and output language.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptInterviewRequest',
+            create: _interview_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, language: { type: 'string' } }, required: ['sessionId', 'text'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptInterviewRequest',
+            create: _interview_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, language: { type: 'string' } }, required: ['sessionId', 'text'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptInterviewResult',
+        create: _interview_result,
+        description: 'the clarifying questions for the draft; empty when nothing was worth asking.',
+        jsonSchema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, options: { type: 'array', items: { type: 'string' } } }, required: ['text', 'options'], additionalProperties: true } }, provider: { type: 'string' }, model: { type: 'string' }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['questions', 'provider', 'model'], additionalProperties: true },
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 63, column: 9 },
+    },
     'promptOptimizer/listPrompts': {
       service: 'promptOptimizerController',
       description: 'List the prompt library\'s most recent entries, newest first.',
@@ -311,13 +386,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' } }, required: ['sessionId', 'text'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } } }, required: ['sessionId', 'text'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' } }, required: ['sessionId', 'text'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } } }, required: ['sessionId', 'text'], additionalProperties: false },
           },
         },
       ],

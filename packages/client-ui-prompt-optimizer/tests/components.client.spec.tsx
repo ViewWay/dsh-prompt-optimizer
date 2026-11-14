@@ -65,6 +65,8 @@ function buttonProps(overrides: Partial<OptimizeButtonProps> & { draft?: string;
     inputActions: inputActions(setDraft),
     start,
     startQueued: vi.fn(),
+    startInterview: vi.fn(),
+    startInterviewQueued: vi.fn(),
     loadRoles: vi.fn(async () => []),
     recommendRoles: vi.fn(async () => []),
     openLibrary: vi.fn(),
@@ -175,6 +177,13 @@ describe('OptimizeButton', () => {
     screen.getByRole('button', { name: zh.libraryOpen }).click()
     expect(openLibrary).toHaveBeenCalledExactlyOnceWith(SESSION, expect.any(Function))
   })
+  it('starts an interview round from the clarify trigger', () => {
+    const startInterview = vi.fn()
+    const { props } = buttonProps({ draft: '帮我写单片机固件', startInterview })
+    render(<OptimizeButton {...props} />)
+    screen.getByRole('button', { name: zh.interview }).click()
+    expect(startInterview).toHaveBeenCalledExactlyOnceWith(SESSION, '帮我写单片机固件', expect.any(Function))
+  })
 })
 
 describe('QueueItemOptimizeEntry', () => {
@@ -240,6 +249,10 @@ function panelProps(state: OptimizationState | undefined, actions: Partial<Previ
     regenerateAsSystem: vi.fn(),
     regenerateAsRole: vi.fn(),
     regenerateWithDirection: vi.fn(),
+    reInterview: vi.fn(),
+    answerInterview: vi.fn(),
+    submitInterview: vi.fn(),
+    skipInterview: vi.fn(),
     cancel: vi.fn(),
     loadRoles: vi.fn(async () => []),
     verifyCheck: vi.fn(async () => ({ passed: true, exitCode: 0, timedOut: false, output: '', durationMs: 0 })),
@@ -728,6 +741,34 @@ describe('PreviewPanel', () => {
     cleanup()
     render(<PreviewPanel {...panelProps(running)} />)
     expect(screen.queryByTestId('optimization-directions')).toBeNull()
+  })
+
+  it('renders interview questions, records picks, and submits the round', () => {
+    const answerInterview = vi.fn(), submitInterview = vi.fn(), skipInterview = vi.fn()
+    const interviewing: OptimizationState = {
+      phase: 'interviewing', draft: '帮我写单片机固件', previousAttempts: [], role: undefined,
+      questions: [{ text: '目标芯片型号？', options: ['STM32F103', 'ESP32'] }], answers: {},
+      result: undefined, error: undefined, apply: () => {},
+    }
+    render(<PreviewPanel {...panelProps(interviewing, { answerInterview, submitInterview, skipInterview })} />)
+
+    expect(screen.getByText('目标芯片型号？')).toBeTruthy()
+    screen.getByRole('button', { name: 'ESP32' }).click()
+    expect(answerInterview).toHaveBeenCalledExactlyOnceWith(SESSION, 0, 'ESP32')
+
+    screen.getByTestId('interview-submit').click()
+    expect(submitInterview).toHaveBeenCalledExactlyOnceWith(SESSION)
+
+    screen.getByTestId('interview-skip').click()
+    expect(skipInterview).toHaveBeenCalledExactlyOnceWith(SESSION)
+    expect(screen.queryByTestId('optimization-directions')).toBeNull()
+  })
+
+  it('shows the clarify-again action on a completed round', () => {
+    const reInterview = vi.fn()
+    render(<PreviewPanel {...panelProps(READY, { reInterview })} />)
+    screen.getByTestId('reinterview').click()
+    expect(reInterview).toHaveBeenCalledExactlyOnceWith(SESSION)
   })
 })
 

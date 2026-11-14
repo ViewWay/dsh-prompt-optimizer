@@ -9,13 +9,13 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import type { SessionPendingInteractionBase } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { PromptOptimizeDirection, PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
+import type { PromptClarification, PromptInterviewQuestion, PromptOptimizeDirection, PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
 
 /** Identity of one pending queue item the round may rewrite in place. */
 export type QueueItemId = InputState['queue'][number]['id']
 
 /** Lifecycle of one optimization round. */
-export type OptimizationPhase = 'running' | 'ready' | 'failed'
+export type OptimizationPhase = 'running' | 'interviewing' | 'ready' | 'failed'
 
 /** Complete optimization state for one Session. */
 export interface OptimizationState {
@@ -30,6 +30,12 @@ export interface OptimizationState {
   readonly direction?: PromptOptimizeDirection | undefined
   /** Pending queue item the round rewrites in place; absent for a draft round. */
   readonly queueItemId?: QueueItemId
+  /** Interview questions awaiting answers; present only while `interviewing` (undefined while they load). */
+  readonly questions?: readonly PromptInterviewQuestion[] | undefined
+  /** Answer per question index — a picked option or free text; present only while `interviewing`. */
+  readonly answers?: Readonly<Record<number, string>> | undefined
+  /** Interview answers carried into rounds and preserved across reruns; absent for a plain round. */
+  readonly clarifications?: readonly PromptClarification[] | undefined
   /** Result of the completed round; present only in `ready`. */
   readonly result: PromptOptimizeResult | undefined
   /** Failure message of the round; present only in `failed`. */

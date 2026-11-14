@@ -52,6 +52,34 @@ it('wraps one capability failure as the typed Remote error with its reason', asy
     .rejects.toMatchObject({ message: 'provider failed', details: { reason: 'provider failed' }, cause: failure })
 })
 
+const INTERVIEW_RESULT = {
+  questions: [{ text: '目标芯片型号？', options: ['STM32F103'] }],
+  provider: 'current-route',
+  model: 'current-model',
+}
+
+it('forwards an interview request to the capability service unchanged', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const interview = vi.fn(async () => INTERVIEW_RESULT)
+  ctx.provide('promptOptimizer', { interview } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = { sessionId: 'session-1' as never, text: '帮我写单片机固件' }
+
+  await expect(api.interview(request, new AbortController().signal)).resolves.toEqual(INTERVIEW_RESULT)
+  expect(interview).toHaveBeenCalledExactlyOnceWith(request, expect.any(AbortSignal))
+})
+
+it('wraps an interview failure as the typed Remote error', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  ctx.provide('promptOptimizer', { interview: vi.fn(async () => { throw new Error('no route') }) } as never)
+  const api = new PromptOptimizerController(ctx)
+
+  await expect(api.interview({ sessionId: 'session-1' as never, text: 'draft' }, new AbortController().signal))
+    .rejects.toMatchObject({ code: 'prompt-optimizer/interview-failed', details: { reason: 'no route' } })
+})
+
 const VERIFY_RESULT = { passed: true, exitCode: 0, timedOut: false, output: '$ ls\nok', durationMs: 4 }
 
 it('forwards a verify request to the capability service unchanged', async () => {

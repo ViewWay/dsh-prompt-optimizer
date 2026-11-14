@@ -222,6 +222,39 @@ describe('PromptOptimizer.optimize', () => {
     expect(llmRequests(session.snapshotEvents()).at(-1)?.previousAttempts).toBe(1)
   })
 
+  it('folds interview answers into the round input, system prompt, and log count', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(envelope('带着澄清改写', []))
+    const session = ctx.sessions.get(sessionId)!
+
+    const result = await ctx.promptOptimizer.optimize(
+      {
+        sessionId,
+        text: '帮我写单片机固件',
+        clarifications: [
+          { question: '目标芯片型号？', answer: 'STM32F103' },
+          { question: '成功标准？', answer: '编译通过' },
+        ],
+      },
+      new AbortController().signal,
+    )
+
+    expect(result.tier).toBe('standard')
+    const input = adapter.requests[0]?.messages[0]?.content[0]
+    expect(input?.type === 'text' && input.text).toContain('Q: 目标芯片型号？\nA: STM32F103')
+    expect(adapter.requests[0]!.system).toContain('authoritative requirements')
+    expect(llmRequests(session.snapshotEvents()).at(-1)?.clarifications).toBe(2)
+  })
+
+  it('rejects malformed interview answers before any dispatch', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(envelope('不应出现', []))
+
+    await expect(ctx.promptOptimizer.optimize(
+      { sessionId, text: 'draft', clarifications: [{ question: ' ', answer: 'A' }] },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_BAD_CLARIFICATION' })
+    expect(adapter.requests).toHaveLength(0)
+  })
+
   it('caps replayed rejected results: five pass, six fail, oversized totals fail', async () => {
     const { ctx, adapter, sessionId } = await withAdapter(envelope('第五次改写', []))
 
@@ -1162,5 +1195,64 @@ describe('output language', () => {
       { sessionId, text: '帮我写个脚本', language: 'x'.repeat(41) },
       new AbortController().signal,
     )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_BAD_LANGUAGE' })
+  })
+})
+
+describe('PromptOptimizer.interview', () => {
+  const questionsText = [
+    '<<<QUESTIONS>>>',
+    'Q: 目标芯片型号？',
+    '- STM32F103',
+    '- ESP32',
+    'Q: 成功的判断标准是什么？',
+    '- (free text)',
+  ].join('\n')
+
+  /** Plain-text response script: the interview envelope carries no rewrite markers. */
+  function interviewScript(text: string): StreamChunk[] {
+    return [
+      { type: 'block-start', index: 0, blockType: 'text' },
+      { type: 'text-delta', index: 0, text },
+      { type: 'finish', reason: { kind: 'stop' } },
+    ]
+  }
+
+  it('returns parsed questions with the route and records the round', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(interviewScript(questionsText))
+    const session = ctx.sessions.get(sessionId)!
+
+    const result = await ctx.promptOptimizer.interview(
+      { sessionId, text: '帮我写单片机固件，读一下 I2C 寄存器' },
+      new AbortController().signal,
+    )
+
+    expect(result.questions).toEqual([
+      { text: '目标芯片型号？', options: ['STM32F103', 'ESP32'] },
+      { text: '成功的判断标准是什么？', options: [] },
+    ])
+    expect(result.provider).toBe('current-route')
+    expect(result.model).toBe('current-model')
+    expect(adapter.requests[0]!.system).toContain('intent clarification specialist')
+    expect(adapter.requests[0]!.system).toContain('chip or module model')
+    const records = session.snapshotEvents().flatMap(event => {
+      const record = pluginRecordOf(event)
+      return record?.type === 'plugin:prompt-optimizer/interview' ? [record.data] : []
+    })
+    expect(records).toEqual([{
+      route: { provider: 'current-route', model: 'current-model' },
+      inputBytes: Buffer.byteLength('帮我写单片机固件，读一下 I2C 寄存器', 'utf8'),
+      questions: 2,
+    }])
+  })
+
+  it('returns no questions when the model finds nothing worth asking', async () => {
+    const { ctx, sessionId } = await withAdapter(interviewScript('<<<QUESTIONS>>>\n这份草稿已经足够明确。'))
+
+    const result = await ctx.promptOptimizer.interview(
+      { sessionId, text: '帮我写个脚本' },
+      new AbortController().signal,
+    )
+
+    expect(result.questions).toEqual([])
   })
 })

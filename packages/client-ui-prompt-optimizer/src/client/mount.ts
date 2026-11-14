@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { ComposerChainProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
+  PromptClarification,
   PromptLibraryEntry,
   PromptOptimizeDirection,
   PromptOptimizeTarget,
@@ -48,6 +49,8 @@ interface RoundRequest {
   readonly direction: PromptOptimizeDirection | undefined
   /** True forces a rewrite round past the host's decline-to-optimize precheck. */
   readonly force: boolean
+  /** Interview answers folded into the round as first-class requirements; absent for a plain round. */
+  readonly clarifications?: readonly PromptClarification[] | undefined
   /** Pending queue item the round rewrites in place; absent for a draft round. */
   readonly queueItemId: QueueItemId | undefined
 }
@@ -116,6 +119,7 @@ function registerUi(ctx: Context): void {
       draft[sessionId] = {
         phase: 'running', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
         direction: state.direction,
+        ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
         ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
         result: undefined, error: undefined, apply: state.apply,
       }
@@ -133,6 +137,7 @@ function registerUi(ctx: Context): void {
             ...(language !== undefined ? { language } : {}),
             ...(state.direction !== undefined ? { direction: state.direction } : {}),
             ...(state.force ? { force: true } : {}),
+            ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
           },
           controller.signal,
         )
@@ -143,6 +148,7 @@ function registerUi(ctx: Context): void {
             // The resolved role (host defaultRole included) is what the round used.
             phase: 'ready', draft: state.draft, previousAttempts: state.previousAttempts, role: result.value.role,
             direction: state.direction,
+            ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             result: result.value, error: undefined, apply: state.apply,
           }
@@ -154,8 +160,61 @@ function registerUi(ctx: Context): void {
           draft[sessionId] = {
             phase: 'failed', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
             direction: state.direction,
+            ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             result: undefined, error: message, apply: state.apply,
+          }
+        })
+      } finally {
+        if (rounds.get(sessionId)?.controller === controller) rounds.delete(sessionId)
+      }
+    })()
+  }
+
+  /**
+   * Interview the user about one draft: fetch clarifying questions, hold them
+   * in the `interviewing` phase, and fall straight into a plain round when the
+   * model finds nothing worth asking.
+   */
+  const runInterview = (sessionId: SessionId, base: RoundRequest): void => {
+    const round = rounds.get(sessionId)
+    if (round !== undefined) round.controller.abort(new Error('superseded by a new round'))
+    const controller = new AbortController()
+    rounds.set(sessionId, { controller })
+    store.update((draft) => {
+      draft[sessionId] = {
+        phase: 'interviewing', draft: base.draft, previousAttempts: base.previousAttempts, role: base.role,
+        direction: base.direction,
+        ...(base.queueItemId !== undefined ? { queueItemId: base.queueItemId } : {}),
+        questions: undefined, answers: {},
+        result: undefined, error: undefined, apply: base.apply,
+      }
+    })
+    void (async () => {
+      try {
+        const language = activeLanguageLabel(ctx.locale)
+        const result = await ctx.remote.promptOptimizer.interview(
+          { sessionId, text: base.draft, ...(language !== undefined ? { language } : {}) },
+          controller.signal,
+        )
+        if (!result.ok) throw new Error(result.error.message)
+        controller.signal.throwIfAborted()
+        if (result.value.questions.length === 0) {
+          runRound(sessionId, { ...base, force: false })
+          return
+        }
+        store.update((draft) => {
+          draft[sessionId] = { ...draft[sessionId]!, questions: result.value.questions, answers: {} }
+        })
+      } catch (failure) {
+        if (controller.signal.aborted && rounds.get(sessionId)?.controller === controller) return
+        const message = failure instanceof Error ? failure.message : String(failure)
+        store.update((draft) => {
+          draft[sessionId] = {
+            phase: 'failed', draft: base.draft, previousAttempts: base.previousAttempts, role: base.role,
+            direction: base.direction,
+            ...(base.queueItemId !== undefined ? { queueItemId: base.queueItemId } : {}),
+            result: undefined, error: message, apply: base.apply,
           }
         })
       } finally {
@@ -203,7 +262,7 @@ function registerUi(ctx: Context): void {
     const rejected = state.result === undefined ? state.previousAttempts : [...state.previousAttempts, state.result.optimizedText]
     runRound(sessionId, {
       draft: state.draft, previousAttempts: rejected, apply: state.apply ?? (() => {}), target,
-      role, direction: direction ?? state.direction, force: true, queueItemId: state.queueItemId,
+      role, direction: direction ?? state.direction, force: true, clarifications: state.clarifications, queueItemId: state.queueItemId,
     })
   }
 
@@ -258,6 +317,55 @@ function registerUi(ctx: Context): void {
     },
     regenerateWithDirection: (sessionId: SessionId, direction: PromptOptimizeDirection): void => {
       rerun(sessionId, 'draft', store.getSnapshot()[sessionId]?.role, direction)
+    },
+    startInterview: (sessionId: SessionId, text: string, apply: (text: string) => void, role?: string): void => {
+      openPreview(sessionId)
+      runInterview(sessionId, { draft: text, previousAttempts: [], apply, target: 'draft', role, direction: undefined, force: false, queueItemId: undefined })
+    },
+    startInterviewQueued: (sessionId: SessionId, itemId: QueueItemId, text: string, role?: string): void => {
+      openPreview(sessionId)
+      runInterview(sessionId, { draft: text, previousAttempts: [], apply: () => {}, target: 'draft', role, direction: undefined, force: false, queueItemId: itemId })
+    },
+    reInterview: (sessionId: SessionId): void => {
+      const state = store.getSnapshot()[sessionId]
+      if (state === undefined || (state.queueItemId === undefined && state.apply === undefined)) return
+      runInterview(sessionId, {
+        draft: state.draft, previousAttempts: state.previousAttempts, apply: state.apply ?? (() => {}), target: 'draft',
+        role: state.role, direction: state.direction, force: false, queueItemId: state.queueItemId,
+      })
+    },
+    answerInterview: (sessionId: SessionId, index: number, value: string): void => {
+      const state = store.getSnapshot()[sessionId]
+      if (state?.phase !== 'interviewing') return
+      store.update((draft) => {
+        draft[sessionId] = { ...state, answers: { ...state.answers, [index]: value } }
+      })
+    },
+    submitInterview: (sessionId: SessionId): void => {
+      const state = store.getSnapshot()[sessionId]
+      if (state?.phase !== 'interviewing' || state.questions === undefined) return
+      if (state.queueItemId === undefined && state.apply === undefined) return
+      const clarifications: PromptClarification[] = state.questions
+        .flatMap((question, index) => {
+          const answer = (state.answers ?? {})[index]?.trim()
+          return answer !== undefined && answer !== '' ? [{ question: question.text, answer }] : []
+        })
+      // An interviewed draft always deserves the rewrite: force past the decline precheck.
+      runRound(sessionId, {
+        draft: state.draft, previousAttempts: state.previousAttempts, apply: state.apply ?? (() => {}), target: 'draft',
+        role: state.role, direction: state.direction, force: true,
+        ...(clarifications.length > 0 ? { clarifications } : {}),
+        queueItemId: state.queueItemId,
+      })
+    },
+    skipInterview: (sessionId: SessionId): void => {
+      const state = store.getSnapshot()[sessionId]
+      if (state?.phase !== 'interviewing') return
+      if (state.queueItemId === undefined && state.apply === undefined) return
+      runRound(sessionId, {
+        draft: state.draft, previousAttempts: state.previousAttempts, apply: state.apply ?? (() => {}), target: 'draft',
+        role: state.role, direction: state.direction, force: false, queueItemId: state.queueItemId,
+      })
     },
     openLibrary: (sessionId: SessionId, insert: (text: string) => void): void => {
       openLibrary(sessionId, insert)

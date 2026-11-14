@@ -50,6 +50,24 @@ export interface PreviewPanelActions {
    * @param direction - direction the next rewrite must push toward.
    */
   regenerateWithDirection: (sessionId: PromptOptimizationPreview['sessionId'], direction: PromptOptimizeDirection) => void
+  /** Interview the user about the preview's draft again: fresh questions replace the current result.
+   * @param sessionId - Session whose preview is open.
+   */
+  reInterview: (sessionId: PromptOptimizationPreview['sessionId']) => void
+  /** Record one answer for the open interview: a picked option or free text.
+   * @param sessionId - Session whose interview is open.
+   * @param index - question index within the open interview.
+   * @param value - the answer to record.
+   */
+  answerInterview: (sessionId: PromptOptimizationPreview['sessionId'], index: number, value: string) => void
+  /** Optimize the draft now, folding the answered interview questions into the round.
+   * @param sessionId - Session whose interview is open.
+   */
+  submitInterview: (sessionId: PromptOptimizationPreview['sessionId']) => void
+  /** Drop the interview and optimize the draft plainly.
+   * @param sessionId - Session whose interview is open.
+   */
+  skipInterview: (sessionId: PromptOptimizationPreview['sessionId']) => void
   /** Abort any in-flight round and close the preview. */
   cancel: (sessionId: PromptOptimizationPreview['sessionId']) => void
   /** List the host's selectable role definitions; a failing or empty listing keeps the read-only role badge. */
@@ -156,7 +174,7 @@ const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, er
 /** Render one Session's optimization preview in the composer seat. */
 export function PreviewPanel(props: PreviewPanelProps) {
   const { matched, apply, regenerate, regenerateAsSystem, regenerateAsRole, regenerateWithDirection, cancel, loadRoles } = props
-  const { verifyCheck, saveToLibrary, evolveRole, useOptimization, t } = props
+  const { verifyCheck, saveToLibrary, evolveRole, reInterview, answerInterview, submitInterview, skipInterview, useOptimization, t } = props
   const state = useOptimization(snapshot => snapshot[matched.sessionId])
   const [rolesRevision, setRolesRevision] = useState(0)
   const roles = usePromptRoles(loadRoles, rolesRevision)
@@ -168,6 +186,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const ready = state.phase === 'ready' && state.result !== undefined
   const skipped = ready && state.result.skipped === true
   const tierLabelKey = ready ? TIER_LABEL_KEYS[state.result.tier ?? 'standard'] : undefined
+  const interviewing = state.phase === 'interviewing'
 
   const runCheck = (criterion: string, template: string): void => {
     const current = checks[criterion] ?? CHECK_IDLE
@@ -259,8 +278,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
     <div className={css.frame}>
       <section className={css.card} aria-label={t('previewTitle')}>
         <header className={css.header}>
-          {state.phase === 'running' ? <StateDot state="ongoing" /> : null}
-          <span className={css.title}>{t('previewTitle')}</span>
+          {state.phase === 'running' || interviewing ? <StateDot state="ongoing" /> : null}
+          <span className={css.title}>{interviewing ? t('interviewTitle') : t('previewTitle')}</span>
           {state.queueItemId !== undefined
             ? <span className={css.roleBadge} data-testid="optimization-queue">{t('queueBadge')}</span>
             : null}
@@ -271,7 +290,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
             ? <RoleSelector
               roles={roles}
               selected={state.role}
-              disabled={state.phase === 'running'}
+              disabled={state.phase === 'running' || interviewing}
               label={t('roleLabel')}
               noneLabel={t('roleNone')}
               noMatchesLabel={t('roleNoMatches')}
@@ -299,20 +318,55 @@ export function PreviewPanel(props: PreviewPanelProps) {
             </>
             : null}
         </header>
-        <div className={css.body}>
-          <div className={css.column}>
-            <h4 className={css.columnTitle}>{t('original')}</h4>
-            <pre className={css.text} data-testid="optimization-original">{state.draft}</pre>
-          </div>
-          <div className={css.column}>
-            <h4 className={css.columnTitle}>{t('optimized')}</h4>
-            {ready
-              ? <pre className={css.text} data-testid="optimization-result">{state.result.optimizedText}</pre>
-              : <div className={css.text} data-testid="optimization-pending">
-                {state.phase === 'running' ? t('optimizing') : t('failed', { message: state.error ?? '' })}
+        {interviewing
+          ? <div className={css.body} data-testid="interview-body">
+            {state.questions === undefined
+              ? <div className={css.text} data-testid="interview-pending">{t('interviewing')}</div>
+              : <div className={css.column}>
+                {state.questions.map((question, index) => {
+                  const answers = state.answers ?? {}
+                  const answer = answers[index] ?? ''
+                  const picked = question.options.includes(answer) ? answer : undefined
+                  return (
+                    <div key={question.text} className={css.criterion}>
+                      <span>{question.text}</span>
+                      <div className={css.checkRow} data-testid={`interview-question-${String(index)}`}>
+                        {question.options.map(option => (
+                          <button
+                            key={option} type="button"
+                            className={picked === option ? css.directionChipActive : css.directionChip}
+                            aria-pressed={picked === option}
+                            onClick={() => { answerInterview(matched.sessionId, index, option) }}
+                          >
+                            {option}
+                          </button>
+                        ))}
+                        <input
+                          className={css.checkInput} aria-label={question.text}
+                          placeholder={t('clarifyQuestionFree')}
+                          value={picked === undefined ? answer : ''}
+                          onChange={(event) => { answerInterview(matched.sessionId, index, event.target.value) }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
               </div>}
           </div>
-        </div>
+          : <div className={css.body}>
+            <div className={css.column}>
+              <h4 className={css.columnTitle}>{t('original')}</h4>
+              <pre className={css.text} data-testid="optimization-original">{state.draft}</pre>
+            </div>
+            <div className={css.column}>
+              <h4 className={css.columnTitle}>{t('optimized')}</h4>
+              {ready
+                ? <pre className={css.text} data-testid="optimization-result">{state.result.optimizedText}</pre>
+                : <div className={css.text} data-testid="optimization-pending">
+                  {state.phase === 'running' ? t('optimizing') : t('failed', { message: state.error ?? '' })}
+                </div>}
+            </div>
+          </div>}
         {(ready && !skipped) || state.phase === 'failed'
           ? <div className={css.directionRow} data-testid="optimization-directions">
             <span className={css.directionLabel}>{t('directionLabel')}</span>
@@ -478,6 +532,26 @@ export function PreviewPanel(props: PreviewPanelProps) {
             ? <Button size="sm" type="button" onClick={() => { regenerate(matched.sessionId) }}>
               <IconRefreshOutlineRegular size={14} />
               {t('regenerate')}
+            </Button>
+            : null}
+          {interviewing
+            ? <>
+              <Button size="sm" type="button" onClick={() => { skipInterview(matched.sessionId) }} data-testid="interview-skip">
+                {t('clarifySkip')}
+              </Button>
+              <Button
+                size="sm" type="button" variant="primary" className={css.primary}
+                disabled={state.questions === undefined}
+                onClick={() => { submitInterview(matched.sessionId) }}
+                data-testid="interview-submit"
+              >
+                {t('clarifySubmit')}
+              </Button>
+            </>
+            : null}
+          {ready
+            ? <Button size="sm" type="button" onClick={() => { reInterview(matched.sessionId) }} data-testid="reinterview">
+              {t('reinterview')}
             </Button>
             : null}
           {ready

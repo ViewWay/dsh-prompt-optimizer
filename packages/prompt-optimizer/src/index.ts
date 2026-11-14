@@ -35,6 +35,9 @@ import type {} from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type {
   ModelTier,
+  PromptClarification,
+  PromptInterviewRequest,
+  PromptInterviewResult,
   PromptLibraryDeleteRequest,
   PromptLibraryEntry,
   PromptLibrarySaveRequest,
@@ -55,9 +58,12 @@ import {
   critiqueSystemPrompt,
   critiqueUserInput,
   detectDomainPriors,
+  interviewSystemPrompt,
+  interviewUserInput,
   optimizerSystemPrompt,
   optimizerSystemPromptForSystem,
   optimizerUserInput,
+  parseInterviewResponse,
   parseOptimizerResponse,
   roleEvolutionSystemPrompt,
   roleEvolutionUserInput,
@@ -84,6 +90,8 @@ declare module '@deepseek-ai/dsh-session/types' {
     'plugin:prompt-optimizer/role-evolved': PromptOptimizerRoleEvolvedEventData
     /** Log-only record of one round the precheck declined to rewrite. */
     'plugin:prompt-optimizer/skipped': PromptOptimizerSkippedEventData
+    /** Log-only record of one completed intent-clarification interview round. */
+    'plugin:prompt-optimizer/interview': PromptOptimizerInterviewEventData
   }
 }
 
@@ -122,6 +130,8 @@ export interface PromptOptimizerLlmRequestEventData {
   readonly direction?: PromptOptimizeDirection
   /** Capability tier of the round's route. */
   readonly tier?: ModelTier
+  /** Number of interview answers the round's input carried; absent for a plain round. */
+  readonly clarifications?: number
 }
 
 /** One round the precheck declined to rewrite, recorded instead of a dispatch. */
@@ -134,6 +144,16 @@ export interface PromptOptimizerSkippedEventData {
   readonly target: PromptOptimizeTarget
   /** UTF-8 byte size of the declined draft text. */
   readonly inputBytes: number
+}
+
+/** One completed intent-clarification interview round, recorded after parsing. */
+export interface PromptOptimizerInterviewEventData {
+  /** Exact auxiliary LLM route. */
+  readonly route: { readonly provider: string; readonly model: string }
+  /** UTF-8 byte size of the interviewed draft text. */
+  readonly inputBytes: number
+  /** Number of clarifying questions the round produced. */
+  readonly questions: number
 }
 
 /** One executed acceptance-criterion check command, recorded after completion. */
@@ -200,6 +220,8 @@ const LIBRARY_TEXT_MAX_BYTES = 64 * 1024
 const LIBRARY_MAX_ENTRIES = 100
 /** Most rejected earlier results one optimize request may replay. */
 const MAX_PREVIOUS_ATTEMPTS = 5
+/** Most interview answers one optimize request may carry. */
+const MAX_CLARIFICATIONS = 6
 /** Every rewrite direction a request may steer a round toward. */
 const DIRECTIONS: readonly PromptOptimizeDirection[] = ['concise', 'detailed', 'technical', 'structured', 'acceptance']
 /** Slug shape a role id must have before the directory listing is consulted. */
@@ -386,6 +408,35 @@ function normalizeLanguage(language: string | undefined): string | undefined {
 }
 
 /**
+ * Normalize the interview answers one request carries: trimmed, count- and
+ * byte-capped, and every pair non-empty, so a malformed replay cannot degrade
+ * the round's system prompt.
+ * @param clarifications - raw request field.
+ * @param maxBytes - byte cap the answers' combined size must respect.
+ * @returns the normalized answers; empty for a plain round.
+ * @throws when a pair is empty, the count exceeds the cap, or the combined
+ * size exceeds `maxBytes`.
+ */
+function normalizeClarifications(
+  clarifications: readonly PromptClarification[] | undefined,
+  maxBytes: number,
+): readonly PromptClarification[] {
+  if (clarifications === undefined) return []
+  if (clarifications.length > MAX_CLARIFICATIONS) {
+    fail('PROMPT_OPTIMIZER_CLARIFICATIONS_TOO_MANY', `prompt-optimizer: at most ${String(MAX_CLARIFICATIONS)} interview answers may be carried`)
+  }
+  const normalized = clarifications.map(pair => ({ question: pair.question.trim(), answer: pair.answer.trim() }))
+  if (normalized.some(pair => pair.question === '' || pair.answer === '')) {
+    fail('PROMPT_OPTIMIZER_BAD_CLARIFICATION', 'prompt-optimizer: every interview answer needs a non-empty question and answer')
+  }
+  const bytes = normalized.reduce((total, pair) => total + Buffer.byteLength(`${pair.question}\n${pair.answer}`, 'utf8'), 0)
+  if (bytes > maxBytes) {
+    fail('PROMPT_OPTIMIZER_CLARIFICATIONS_TOO_LARGE', `prompt-optimizer: interview answers total ${String(bytes)} bytes, exceeding maxInputBytes ${String(maxBytes)}`)
+  }
+  return normalized
+}
+
+/**
  * Build the no-adapter failure body: the requested id, the routes the app
  * currently serves, and the exact-match rule. Route keys are matched
  * character-for-character, so gateway-deployed models (LiteLLM, vLLM,
@@ -515,6 +566,7 @@ export default class PromptOptimizer extends Service {
     readonly language: string | undefined
     readonly direction: PromptOptimizeDirection | undefined
     readonly tier: ModelTier
+    readonly clarifications: number
   }, signal: AbortSignal): Promise<{ parsed: ReturnType<typeof parseOptimizerResponse>; usage: TokenUsage | undefined }> {
     const messages: Message[] = [createUserMessage({
       content: [{ type: 'text', text: options.input }],
@@ -553,6 +605,7 @@ export default class PromptOptimizer extends Service {
       ...(options.language !== undefined ? { language: options.language } : {}),
       ...(options.direction !== undefined ? { direction: options.direction } : {}),
       tier: options.tier,
+      ...(options.clarifications > 0 ? { clarifications: options.clarifications } : {}),
     })
     callDeadline.signal.throwIfAborted()
     const assembler = new BlockAssembler()
@@ -605,6 +658,7 @@ export default class PromptOptimizer extends Service {
     if (replayedBytes > this.config.maxInputBytes) {
       fail('PROMPT_OPTIMIZER_ATTEMPTS_TOO_MANY', `prompt-optimizer: replayed rejected results total ${String(replayedBytes)} bytes, exceeding maxInputBytes ${String(this.config.maxInputBytes)}`)
     }
+    const clarifications = normalizeClarifications(request.clarifications, this.config.maxInputBytes)
     const requestedRole = request.role ?? this.config.defaultRole
     const role = requestedRole === undefined ? undefined : await this.loadRole(requestedRole, signal)
     const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
@@ -619,6 +673,7 @@ export default class PromptOptimizer extends Service {
         role: requestedRole,
         direction,
         previousAttempts,
+        clarifications,
       })
       if (skipReason !== undefined) {
         appendPluginRecord(session, 'plugin:prompt-optimizer/skipped', {
@@ -647,6 +702,7 @@ export default class PromptOptimizer extends Service {
       domainPriors: priors,
       skills,
       tier,
+      ...(clarifications.length > 0 ? { clarifications } : {}),
       ...(role !== undefined ? { role } : {}),
       ...(language !== undefined ? { language } : {}),
       ...(direction !== undefined ? { direction } : {}),
@@ -656,7 +712,7 @@ export default class PromptOptimizer extends Service {
       target,
       round: 1,
       system: target === 'system' ? optimizerSystemPromptForSystem(conditioning) : optimizerSystemPrompt(conditioning),
-      input: optimizerUserInput(request.text, previousAttempts),
+      input: optimizerUserInput(request.text, previousAttempts, clarifications),
       inputBytes,
       previousAttempts,
       sessionId: request.sessionId,
@@ -665,6 +721,7 @@ export default class PromptOptimizer extends Service {
       language,
       direction,
       tier,
+      clarifications: clarifications.length,
     }, signal)
     if (first.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the model returned an empty rewrite')
@@ -697,6 +754,7 @@ export default class PromptOptimizer extends Service {
       language,
       direction,
       tier,
+      clarifications: clarifications.length,
     }, signal)
     if (critique.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the critique round returned an empty rewrite')
@@ -714,6 +772,71 @@ export default class PromptOptimizer extends Service {
       ...(direction !== undefined ? { direction } : {}),
       ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
       ...(usage !== undefined ? { usage } : {}),
+    }
+  }
+
+  /**
+   * Interview the user about one draft: one auxiliary round that turns the
+   * draft's ambiguity into at most three clickable clarifying questions,
+   * conditioned on the draft's domain priors. The answers later ride into
+   * {@link PromptOptimizer.optimize} as authoritative requirements.
+   * @param request - session, draft text, and output language.
+   * @param signal - caller cancellation.
+   * @returns the parsed questions with the exact route that produced them;
+   * empty questions mean the model found nothing worth asking.
+   * @throws when the session is gone, bounds fail, the deadline or
+   * cancellation fires, or the stream ends in an operational failure.
+   */
+  async interview(request: PromptInterviewRequest, signal: AbortSignal): Promise<PromptInterviewResult> {
+    signal.throwIfAborted()
+    const session = this.ctx.sessions.get(request.sessionId)
+    if (session === undefined) {
+      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
+    }
+    const inputBytes = Buffer.byteLength(request.text, 'utf8')
+    if (request.text.trim() === '') {
+      fail('PROMPT_OPTIMIZER_EMPTY_DRAFT', 'prompt-optimizer: draft is empty')
+    }
+    if (inputBytes > this.config.maxInputBytes) {
+      fail('PROMPT_OPTIMIZER_INPUT_TOO_LARGE', `prompt-optimizer: draft is ${inputBytes} bytes, exceeding maxInputBytes ${this.config.maxInputBytes}`)
+    }
+    const language = normalizeLanguage(request.language)
+    const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+    const tier = classifyModelTier(route.provider, route.model)
+    const priors = this.config.domainPriors ? detectDomainPriors(request.text) : []
+    signal.throwIfAborted()
+    const conditioning: RoundConditioning = {
+      domainPriors: priors,
+      ...(language !== undefined ? { language } : {}),
+    }
+    const round = await this.dispatchRound(session, {
+      route,
+      target: 'draft',
+      round: 1,
+      system: interviewSystemPrompt(conditioning),
+      input: interviewUserInput(request.text),
+      inputBytes,
+      previousAttempts: [],
+      sessionId: request.sessionId,
+      role: undefined,
+      skillsHinted: 0,
+      language,
+      direction: undefined,
+      tier,
+      clarifications: 0,
+    }, signal)
+    const questions = parseInterviewResponse(round.parsed.optimizedText)
+    appendPluginRecord(session, 'plugin:prompt-optimizer/interview', {
+      route,
+      inputBytes,
+      questions: questions.length,
+    })
+    return {
+      questions,
+      provider: route.provider,
+      model: route.model,
+      tier,
+      ...(round.usage !== undefined ? { usage: round.usage } : {}),
     }
   }
 

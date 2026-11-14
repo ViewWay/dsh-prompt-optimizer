@@ -52,6 +52,7 @@ async function fixture(
   optimize?: (request: unknown, signal: AbortSignal) => Promise<unknown>,
   localeSnapshot?: () => StubLocaleSnapshot,
   declareQueueSlot = true,
+  remoteExtra: Record<string, unknown> = {},
 ) {
   const ctx = new Context(), unmount = vi.fn(async () => {})
   class Remote extends Service {
@@ -74,7 +75,7 @@ async function fixture(
         },
   } as never)
   const round = vi.fn(async () => ({ ok: true as const, value: RESULT }))
-  ctx.provide('remote.promptOptimizer', { optimize: optimize ?? round } as never)
+  ctx.provide('remote.promptOptimizer', { optimize: optimize ?? round, ...remoteExtra } as never)
   ctx.provide('configForms', {
     get: () => ({
       getSnapshot: () => ({ status: 'loading', value: undefined, base: {}, user: {}, writable: false, revision: 0 }),
@@ -102,6 +103,10 @@ type MountedActions = {
   apply: (sessionId: SessionId) => void
   regenerate: (sessionId: SessionId) => void
   regenerateAsRole: (sessionId: SessionId, role: string | undefined) => void
+  startInterview: (sessionId: SessionId, text: string, apply: (text: string) => void, role?: string) => void
+  answerInterview: (sessionId: SessionId, index: number, value: string) => void
+  submitInterview: (sessionId: SessionId) => void
+  skipInterview: (sessionId: SessionId) => void
   cancel: (sessionId: SessionId) => void
   hooks: { optimization: { getSnapshot(): OptimizationSnapshot; subscribe(listener: () => void): () => void } }
 }
@@ -365,4 +370,76 @@ it('rolls back the Remote when a slot registration fails', async () => {
     await expect(mountPromptOptimizer(ctx, REMOTE)).rejects.toThrow('slot failed')
     expect(unmount).toHaveBeenCalledOnce()
   } finally { await ctx.fiber.dispose() }
+})
+
+it('interviews before optimizing: answered questions ride into the forced round', async () => {
+  const interview = vi.fn(async () => ({
+    ok: true as const,
+    value: {
+      questions: [
+        { text: '目标芯片型号？', options: ['STM32F103', 'ESP32'] },
+        { text: '成功标准？', options: [] },
+      ],
+      provider: 'current-route',
+      model: 'current-model',
+    },
+  }))
+  const optimize = vi.fn(async () => ({ ok: true as const, value: RESULT }))
+  const b = await fixture(optimize, undefined, true, { interview })
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx)
+
+    actions.startInterview(SESSION, '帮我写单片机固件', () => {})
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('interviewing') })
+    await vi.waitFor(() => { expect(interview).toHaveBeenCalledTimes(1) })
+    expect(stateOf(b.ctx)?.questions).toHaveLength(2)
+
+    actions.answerInterview(SESSION, 0, 'ESP32')
+    actions.answerInterview(SESSION, 1, '编译通过')
+    actions.submitInterview(SESSION)
+    await vi.waitFor(() => { expect(optimize).toHaveBeenCalledTimes(1) })
+    expect(optimize).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: SESSION,
+      text: '帮我写单片机固件',
+      force: true,
+      clarifications: [
+        { question: '目标芯片型号？', answer: 'ESP32' },
+        { question: '成功标准？', answer: '编译通过' },
+      ],
+    }), expect.any(AbortSignal))
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+    // A later explicit rerun keeps the answers in the round.
+    actions.regenerate(SESSION)
+    await vi.waitFor(() => { expect(optimize).toHaveBeenCalledTimes(2) })
+    expect(optimize).toHaveBeenLastCalledWith(expect.objectContaining({
+      previousAttempts: ['优化后的提示词'],
+      clarifications: [
+        { question: '目标芯片型号？', answer: 'ESP32' },
+        { question: '成功标准？', answer: '编译通过' },
+      ],
+    }), expect.any(AbortSignal))
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('falls straight into a plain round when the interview finds nothing to ask', async () => {
+  const interview = vi.fn(async () => ({ ok: true as const, value: { questions: [], provider: 'current-route', model: 'current-model' } }))
+  const optimize = vi.fn(async () => ({ ok: true as const, value: RESULT }))
+  const b = await fixture(optimize, undefined, true, { interview })
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx)
+
+    actions.startInterview(SESSION, '这份草稿已经很明确', () => {})
+    await vi.waitFor(() => { expect(optimize).toHaveBeenCalledTimes(1) })
+    expect(interview).toHaveBeenCalledTimes(1)
+    const plainRequest = optimize.mock.calls[0]![0] as Record<string, unknown>
+    expect(plainRequest).not.toHaveProperty('force')
+    expect(plainRequest).not.toHaveProperty('clarifications')
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
 })

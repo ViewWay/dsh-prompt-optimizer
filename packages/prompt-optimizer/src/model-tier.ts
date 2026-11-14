@@ -7,7 +7,7 @@
  * @module @yimiliya/dsh-prompt-optimizer
  */
 
-import type { ModelTier, PromptOptimizeDirection, PromptOptimizeTarget, PromptSkipReason } from './types.ts'
+import type { ModelTier, PromptClarification, PromptOptimizeDirection, PromptOptimizeTarget, PromptSkipReason } from './types.ts'
 
 /**
  * Model-id markers of reasoning models: `deepseek-reasoner`, `deepseek-r1`,
@@ -98,6 +98,8 @@ export interface DeclineCheckInput {
   readonly direction: PromptOptimizeDirection | undefined
   /** Rejected earlier results; a retry always justifies a rewrite. */
   readonly previousAttempts: readonly string[]
+  /** Interview answers the round carries; an interviewed draft always justifies a rewrite. */
+  readonly clarifications?: readonly PromptClarification[]
 }
 
 /**
@@ -113,6 +115,7 @@ export function declineToOptimize(input: DeclineCheckInput): PromptSkipReason | 
   if (input.target !== 'draft') return undefined
   if (input.role !== undefined || input.direction !== undefined) return undefined
   if (input.previousAttempts.length > 0) return undefined
+  if ((input.clarifications ?? []).length > 0) return undefined
   if (input.domainPriors.length > 0) return undefined
   const draft = input.draft.trim()
   if (draft.length > SKIP_DRAFT_MAX_CHARS) return undefined

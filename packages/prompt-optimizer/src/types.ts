@@ -29,6 +29,49 @@ export type ModelTier = 'reasoning' | 'local-small' | 'standard'
 /** Why a round was declined instead of rewritten; the client localizes the advice. */
 export type PromptSkipReason = 'reasoning-short-clear'
 
+/** One clarifying question the interviewer round asked, with its clickable candidates. */
+export interface PromptInterviewQuestion {
+  /** Question text in the draft's language, answerable by the user in one click or a short sentence. */
+  readonly text: string
+  /** Up to four short concrete candidate answers; empty when the question needs free text. */
+  readonly options: readonly string[]
+}
+
+/** One user-answered clarifying question, folded into a rewrite as a first-class requirement. */
+export interface PromptClarification {
+  /** The question text exactly as the interview round asked it. */
+  readonly question: string
+  /** The user's answer, verbatim. */
+  readonly answer: string
+}
+
+/** Wire request to interview the user about one draft before rewriting it. */
+export interface PromptInterviewRequest {
+  /** Session whose draft is being interviewed; owns the request log and route fallback. */
+  readonly sessionId: SessionId
+  /** Complete current draft text, exactly as the composer holds it. */
+  readonly text: string
+  /**
+   * Self-describing name of the language the questions must be written in (for
+   * example `中文`); absent keeps the draft's language.
+   */
+  readonly language?: string
+}
+
+/** Outcome of one interview round: the clarifying questions for the draft. */
+export interface PromptInterviewResult {
+  /** Parsed clarifying questions; empty when the model found nothing worth asking. */
+  readonly questions: readonly PromptInterviewQuestion[]
+  /** Exact provider route that produced the questions. */
+  readonly provider: string
+  /** Exact model id that produced the questions. */
+  readonly model: string
+  /** Capability tier of the route that produced the questions. */
+  readonly tier?: ModelTier
+  /** Usage from the stream's `usage` chunk; absent until one arrives. */
+  readonly usage?: TokenUsage
+}
+
 /** One selectable professional role from the configured roles directory. */
 export interface PromptRoleSummary {
   /** Role slug matching a `<slug>.md` definition file in the configured roles directory. */
@@ -104,6 +147,8 @@ export interface PromptOptimizeRequest {
   readonly direction?: PromptOptimizeDirection
   /** True bypasses the decline-to-optimize precheck and forces a rewrite round. */
   readonly force?: boolean
+  /** Interview answers to fold into the rewrite as first-class requirements; absent for a plain round. */
+  readonly clarifications?: readonly PromptClarification[]
 }
 
 /** One draft acceptance criterion the rewritten prompt should be judged against. */

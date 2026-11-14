@@ -75,6 +75,7 @@ describe('declineToOptimize', () => {
     expect(declineToOptimize({ ...base, direction: 'concise' })).toBeUndefined()
     expect(declineToOptimize({ ...base, previousAttempts: ['第一次改写'] })).toBeUndefined()
     expect(declineToOptimize({ ...base, domainPriors: ['Ask for the chip model.'] })).toBeUndefined()
+    expect(declineToOptimize({ ...base, clarifications: [{ question: '目标芯片？', answer: 'STM32F103' }] })).toBeUndefined()
   })
 
   it('keeps long or already structured drafts', () => {

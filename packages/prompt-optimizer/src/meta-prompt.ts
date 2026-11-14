@@ -8,7 +8,7 @@
  * @module @yimiliya/dsh-prompt-optimizer
  */
 
-import type { ModelTier, PromptOptimizeDirection } from './types.ts'
+import type { ModelTier, PromptClarification, PromptInterviewQuestion, PromptOptimizeDirection } from './types.ts'
 import type { SkillHint, SkillParameter } from './skills.ts'
 import { modelTierBlock } from './model-tier.ts'
 
@@ -18,6 +18,8 @@ export const OPTIMIZED_MARKER = '<<<OPTIMIZED_PROMPT>>>'
 export const CHANGES_MARKER = '<<<CHANGES>>>'
 /** Starts the acceptance-criterion section of the model response. */
 export const AC_MARKER = '<<<AC>>>'
+/** Starts the clarifying-questions section of an interview response. */
+export const QUESTIONS_MARKER = '<<<QUESTIONS>>>'
 
 /** Upper bound on change bullets kept from one response. */
 const MAX_CHANGES = 6
@@ -25,6 +27,12 @@ const MAX_CHANGES = 6
 const MAX_ACCEPTANCE = 4
 /** Upper bound on domains whose guidance joins one system prompt. */
 const MAX_PRIOR_DOMAINS = 2
+/** Upper bound on clarifying questions one interview round may carry. */
+const MAX_QUESTIONS = 3
+/** Upper bound on candidate options one clarifying question may carry. */
+const MAX_OPTIONS = 4
+/** Option-line marker meaning the question expects a free-text answer. */
+const FREE_TEXT_OPTION = '(free text)'
 
 /**
  * Fixed English guidance each rewrite direction carries. Enum-keyed so a
@@ -180,8 +188,21 @@ export interface RoundConditioning {
    * `standard` adds no tier guidance.
    */
   readonly tier?: ModelTier
+  /** Interview answers the rewrite must fold in as first-class requirements. */
+  readonly clarifications?: readonly PromptClarification[]
   /** Direction the rewrite should push toward; absent applies the plain rules. */
   readonly direction?: PromptOptimizeDirection
+}
+
+/** Clarification block appended to a system prompt when the user answered interview questions. */
+function clarificationBlock(clarifications: readonly PromptClarification[]): readonly string[] {
+  if (clarifications.length === 0) return []
+  return [
+    '',
+    'The user already answered clarifying questions about this draft. Their answers are authoritative requirements:',
+    '- Fold each answer into the rewrite at the place it belongs (constraints, inputs, success criteria), not as a Q&A appendix.',
+    '- Never contradict, soften, or drop an answer; when an answer conflicts with the draft, the answer wins.',
+  ]
 }
 
 /** Role block appended to a system prompt when a role conditions the round. */
@@ -290,7 +311,7 @@ function writtenIn(language: string | undefined): string {
  * @returns exact system prompt text for every optimization round.
  */
 export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction, tier } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [] } = conditioning
   return [
     'You are a prompt optimization specialist. The user gives you a draft prompt they intend to send to a coding agent. Rewrite the draft into a clear, well-structured prompt.',
     '',
@@ -307,6 +328,7 @@ export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): str
       + 'Append a runnable check command in backticks when one exists; otherwise state the judgment point. Never invent success thresholds.',
     ...priorBlock(domainPriors),
     ...(tier === undefined ? [] : modelTierBlock(tier)),
+    ...clarificationBlock(clarifications),
     ...(role === undefined ? [] : roleBlock(role, DRAFT_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),
@@ -323,7 +345,7 @@ export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): str
  * @returns exact system prompt text for a system-target rewrite round.
  */
 export function optimizerSystemPromptForSystem(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction, tier } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [] } = conditioning
   return [
     'You are a prompt optimization specialist. The user gives you a draft SYSTEM prompt: the standing instruction block that governs a coding agent across a whole session, not a single chat message. Rewrite the draft into a clear, well-structured system prompt.',
     '',
@@ -340,6 +362,7 @@ export function optimizerSystemPromptForSystem(conditioning: RoundConditioning =
       + 'Append a runnable check command in backticks when one exists (for example a grep over the rewritten text); otherwise state the judgment point.',
     ...priorBlock(domainPriors),
     ...(tier === undefined ? [] : modelTierBlock(tier)),
+    ...clarificationBlock(clarifications),
     ...(role === undefined ? [] : roleBlock(role, SYSTEM_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),
@@ -354,7 +377,7 @@ export function optimizerSystemPromptForSystem(conditioning: RoundConditioning =
  * @returns exact system prompt text for the critique round.
  */
 export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction, tier } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [] } = conditioning
   return [
     'You are a prompt optimization specialist performing a critique round on a rewritten SYSTEM prompt. You receive the original draft and the first rewrite. Audit the rewrite, then output an improved full revision.',
     '',
@@ -374,11 +397,93 @@ export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): stri
     `6. End with ${String(MAX_ACCEPTANCE)} or fewer acceptance criteria as before.`,
     ...priorBlock(domainPriors),
     ...(tier === undefined ? [] : modelTierBlock(tier)),
+    ...clarificationBlock(clarifications),
     ...(role === undefined ? [] : roleBlock(role, SYSTEM_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),
     ...ENVELOPE_LINES,
   ].join('\n')
+}
+
+/**
+ * The interviewer system prompt: turn the draft's ambiguity into at most
+ * {@link MAX_QUESTIONS} high-leverage clarifying questions the user answers in
+ * one click or a short sentence — the questions a domain specialist asks
+ * before accepting the task, distilled from the same priors that condition
+ * the rewrite.
+ * @param conditioning - round conditioners; priors surface as questions, the
+ * language pins the questions' language.
+ * @returns exact system prompt text for one interview round.
+ */
+export function interviewSystemPrompt(conditioning: RoundConditioning = {}): string {
+  const { domainPriors = [], language } = conditioning
+  return [
+    'You are an intent clarification specialist. The user gives you a draft prompt they intend to send to a coding agent. Interview the user: ask the questions whose answers would most change the rewrite.',
+    '',
+    'Rules:',
+    languageRule(language),
+    '2. Never answer the prompt, never perform the task, never evaluate the draft — only ask.',
+    `3. Ask ${String(MAX_QUESTIONS)} or fewer questions. Ask none when the draft already pins down goal, inputs, and success — an empty answer is correct for a complete draft.`,
+    '4. Each question must be answerable by the user in one click or one short sentence: a missing constraint (version, scope, environment), an unstated input or output, the observable definition of done, or an ignored edge case.',
+    '5. Never ask about anything the draft already states; never offer an option the draft contradicts.',
+    `6. Under each question, list at most ${String(MAX_OPTIONS)} short concrete candidate answers as bullets the user can pick verbatim. When candidates cannot be enumerated, list exactly '${FREE_TEXT_OPTION}' instead.`,
+    ...priorBlock(domainPriors),
+    '',
+    'Respond with exactly this format and nothing else:',
+    QUESTIONS_MARKER,
+    'Q: (question text)',
+    '- (candidate answer 1)',
+    '- (candidate answer 2)',
+    'Q: (another question)',
+    `- ${FREE_TEXT_OPTION}`,
+  ].join('\n')
+}
+
+/**
+ * Frame one draft as the interview round's user input.
+ * @param text - complete draft text to interview about.
+ * @returns exact user input for the interview round.
+ */
+export function interviewUserInput(text: string): string {
+  return ['Interview the user about the following draft prompt:', '', text].join('\n')
+}
+
+/**
+ * Parse one interview response into its clarifying questions. The
+ * {@link QUESTIONS_MARKER} line and the {@link FREE_TEXT_OPTION} marker are
+ * format chrome, not content, and are dropped; later sections of a rewrite
+ * envelope never appear because the interview prompt pins this exact format.
+ * @param response - complete assembled interview response.
+ * @returns at most {@link MAX_QUESTIONS} questions, each with at most
+ * {@link MAX_OPTIONS} concrete options; empty when nothing was asked.
+ */
+export function parseInterviewResponse(response: string): readonly PromptInterviewQuestion[] {
+  const markerStart = response.indexOf(QUESTIONS_MARKER)
+  const body = markerStart === -1 ? response : response.slice(markerStart + QUESTIONS_MARKER.length)
+  const questions: PromptInterviewQuestion[] = []
+  let current: { text: string; options: string[] } | undefined
+  const flush = (): void => {
+    if (current !== undefined && current.text !== '') {
+      questions.push({ text: current.text, options: current.options })
+    }
+    current = undefined
+  }
+  for (const rawLine of body.split('\n')) {
+    const line = rawLine.trim()
+    if (line === '') continue
+    if (line.startsWith('Q:')) {
+      flush()
+      current = { text: line.replace(/^Q:\s*/, '').trim(), options: [] }
+      if (questions.length >= MAX_QUESTIONS) break
+      continue
+    }
+    if (current === undefined) continue
+    const option = line.replace(/^[-*]\s+/, '').trim()
+    if (option === '' || option === FREE_TEXT_OPTION) continue
+    if (current.options.length < MAX_OPTIONS) current.options.push(option)
+  }
+  flush()
+  return questions.slice(0, MAX_QUESTIONS)
 }
 
 /**
@@ -428,18 +533,28 @@ export function roleEvolutionUserInput(definition: string, draft: string, optimi
 }
 
 /**
- * Frame one draft (and optional rejected earlier results) as the round's user input.
+ * Frame one draft (and optional rejected earlier results plus answered
+ * clarifying questions) as the round's user input.
  * @param text - complete draft text to optimize.
  * @param previousAttempts - rejected optimized texts, oldest first.
+ * @param clarifications - interview answers folded in as authoritative requirements.
  * @returns exact user input for the round.
  */
-export function optimizerUserInput(text: string, previousAttempts: readonly string[]): string {
+export function optimizerUserInput(
+  text: string,
+  previousAttempts: readonly string[],
+  clarifications: readonly PromptClarification[] = [],
+): string {
   const earlier = previousAttempts.map((attempt, index) =>
     `--- rejected result ${String(index + 1)} ---\n${attempt}`).join('\n\n')
+  const answers = clarifications.map(pair => `Q: ${pair.question}\nA: ${pair.answer}`).join('\n\n')
   return [
     previousAttempts.length === 0
       ? ''
       : `The user rejected these earlier rewrites; produce a meaningfully different revision:\n\n${earlier}\n`,
+    clarifications.length === 0
+      ? ''
+      : `The user answered these clarifying questions; each answer is an authoritative requirement of the rewrite:\n\n${answers}\n`,
     'Optimize the following draft prompt:',
     '',
     text,
