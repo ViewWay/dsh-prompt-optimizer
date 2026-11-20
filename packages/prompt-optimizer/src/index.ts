@@ -274,6 +274,8 @@ const REPEATS_MAX_ROWS = 500
 const SKILL_MAX_CHARS = 8000
 /** Most skill bodies one context scan deep-reads. */
 const MAX_SCANNED_SKILLS = 16
+/** Most system-prompt track rows kept on disk, across every session. */
+const TRACKS_MAX_ROWS = 200
 /** Metric kinds a client may report; host-written kinds are never accepted from the wire. */
 const CLIENT_METRIC_KINDS: readonly PromptMetricKind[] = ['adopted', 'rejected', 'decline-overridden']
 /** Most metric rows kept on disk; the oldest beyond the cap are pruned on write. */
@@ -359,6 +361,36 @@ const repeatsDomainSpec = defineDomain({
       id: zod.string(),
       createdAt: zod.string(),
       fingerprint: zod.string(),
+    })),
+  },
+})
+
+/** Persisted system-prompt track row; the storage schema validates this plain shape. */
+interface SystemTrackRow {
+  id: string
+  sessionId: string
+  provider: string
+  model: string
+  tier: string
+  createdAt: string
+}
+
+/**
+ * Per-session system-prompt optimization tracks: the latest route each
+ * session's standing system prompt was tuned on, powering the model-switch
+ * staleness reminder. Never prompt content.
+ */
+const systemTracksDomainSpec = defineDomain({
+  name: 'prompt_optimizer_system_tracks',
+  version: 1,
+  tables: {
+    tracks: domainTable<string, SystemTrackRow>(zod.object({
+      id: zod.string(),
+      sessionId: zod.string(),
+      provider: zod.string(),
+      model: zod.string(),
+      tier: zod.string(),
+      createdAt: zod.string(),
     })),
   },
 })
@@ -889,6 +921,7 @@ export default class PromptOptimizer extends Service {
         ...(direction !== undefined ? { direction } : {}),
         ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
         ...(suggestDistill ? { suggestDistill: true } : {}),
+        ...(await this.systemPromptStaleness(session, route)),
         ...(first.usage !== undefined ? { usage: first.usage } : {}),
       }
     }
@@ -913,6 +946,7 @@ export default class PromptOptimizer extends Service {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the critique round returned an empty rewrite')
     }
     const usage = critique.usage ?? first.usage
+    await this.recordSystemTrack(session, route, tier)
     return {
       optimizedText: critique.parsed.optimizedText,
       changes: first.parsed.changes,
@@ -925,6 +959,7 @@ export default class PromptOptimizer extends Service {
       ...(direction !== undefined ? { direction } : {}),
       ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
       ...(suggestDistill ? { suggestDistill: true } : {}),
+      ...(await this.systemPromptStaleness(session, route)),
       ...(usage !== undefined ? { usage } : {}),
     }
   }
@@ -1129,6 +1164,7 @@ export default class PromptOptimizer extends Service {
       recommended: recommendedIndex,
       ...(judgeError !== undefined ? { judgeFailed: true, judgeError } : {}),
       ...(suggestDistill ? { suggestDistill: true } : {}),
+      ...(await this.systemPromptStaleness(session, route)),
       provider: route.provider,
       model: route.model,
       tier,
@@ -1815,6 +1851,84 @@ export default class PromptOptimizer extends Service {
     } catch (error) {
       this.ctx.logger.warn(`prompt optimizer: recording a draft fingerprint failed: ${error instanceof Error ? error.message : String(error)}`)
       return false
+    }
+  }
+
+  /** System-prompt track domain handle, opened once on first use. */
+  private systemTracks: Promise<Domain<typeof systemTracksDomainSpec>> | undefined
+
+  /**
+   * Open the system-track domain once, failing loudly when the deployment
+   * composed no storage-domain service.
+   * @returns the opened domain shared by every track read and write.
+   */
+  private openSystemTracks(): Promise<Domain<typeof systemTracksDomainSpec>> {
+    const domains = this.ctx.get('storageDomain')
+    if (domains === undefined) {
+      fail('PROMPT_OPTIMIZER_NO_LIBRARY', 'prompt-optimizer: no storage-domain service is composed; add dsh-storage-domain to persist system-prompt tracks')
+    }
+    this.systemTracks ??= domains.open(systemTracksDomainSpec)
+    return this.systemTracks
+  }
+
+  /**
+   * Record the route one system-target round tuned the Session's standing
+   * system prompt on — the latest row per session, older rows for the session
+   * replaced. Best-effort: a storage failure never fails the round.
+   * @param session - live session whose system prompt was tuned.
+   * @param route - exact route the tuning round ran on.
+   * @param tier - capability tier of that route.
+   */
+  private async recordSystemTrack(session: Session, route: { readonly provider: string; readonly model: string }, tier: ModelTier): Promise<void> {
+    if (!this.config.metrics) return
+    try {
+      const table = (await this.openSystemTracks()).table('tracks')
+      const tracked = [...table.entries()]
+      for (const [key, row] of tracked) {
+        if (row.sessionId === session.id) await table.delete(key)
+      }
+      const id = randomUUID()
+      await table.put(id, {
+        id,
+        sessionId: session.id,
+        provider: route.provider,
+        model: route.model,
+        tier,
+        createdAt: new Date().toISOString(),
+      })
+      const entries = [...table.entries()].sort((left, right) => left[1].createdAt.localeCompare(right[1].createdAt))
+      const excess = entries.length - TRACKS_MAX_ROWS
+      for (let index = 0; index < excess; index += 1) {
+        await table.delete(entries[index]![0])
+      }
+    } catch (error) {
+      this.ctx.logger.warn(`prompt optimizer: recording a system-prompt track failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * Compare the Session's latest system-prompt track against the current
+   * route; a different provider or model means the standing system prompt was
+   * tuned for a model the session no longer runs, and the result should carry
+   * the staleness notice. Best-effort: a storage failure yields no notice.
+   * @param session - live session whose track is compared.
+   * @param route - route the current round resolved.
+   * @returns the notice object to spread into the round's result.
+   */
+  private async systemPromptStaleness(session: Session, route: { readonly provider: string; readonly model: string }): Promise<{
+    readonly systemPromptStale?: { readonly from: string; readonly to: string }
+  }> {
+    if (!this.config.metrics) return {}
+    try {
+      const table = (await this.openSystemTracks()).table('tracks')
+      const latest = [...table.entries()]
+        .map(([, row]) => row)
+        .filter(row => row.sessionId === session.id)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+      if (latest === undefined || (latest.provider === route.provider && latest.model === route.model)) return {}
+      return { systemPromptStale: { from: `${latest.provider}/${latest.model}`, to: `${route.provider}/${route.model}` } }
+    } catch {
+      return {}
     }
   }
 

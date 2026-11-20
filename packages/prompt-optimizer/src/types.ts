@@ -189,6 +189,8 @@ export interface PromptOptimizeResult {
   readonly skipReason?: PromptSkipReason
   /** True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill. */
   readonly suggestDistill?: boolean
+  /** Present when this Session's standing system prompt was optimized for a different model than the current route. */
+  readonly systemPromptStale?: { readonly from: string; readonly to: string }
   /** Usage from the stream's `usage` chunk; absent until one arrives. */
   readonly usage?: TokenUsage
 }
@@ -270,6 +272,8 @@ export interface PromptCandidatesResult {
   readonly skipReason?: PromptSkipReason
   /** True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill. */
   readonly suggestDistill?: boolean
+  /** Present when this Session's standing system prompt was optimized for a different model than the current route. */
+  readonly systemPromptStale?: { readonly from: string; readonly to: string }
   /** Usage summed over every round the call dispatched; absent until one arrives. */
   readonly usage?: TokenUsage
 }

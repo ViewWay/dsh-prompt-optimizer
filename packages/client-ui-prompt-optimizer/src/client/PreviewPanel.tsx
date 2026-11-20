@@ -565,6 +565,11 @@ export function PreviewPanel(props: PreviewPanelProps) {
             {t('skillsUsed', { skills: state.result.skills.join(', ') })}
           </p>
           : null}
+        {ready && state.result.systemPromptStale !== undefined
+          ? <p className={css.noChanges} data-testid="system-stale">
+            {t('systemPromptStale', { from: state.result.systemPromptStale.from, to: state.result.systemPromptStale.to })}
+          </p>
+          : null}
         {ready && state.result.critique !== undefined && state.result.critique.length > 0
           ? <div className={css.critique}>
             <ul className={css.changes} data-testid="optimization-critique">

@@ -114,6 +114,7 @@ function resultOfCandidatesRound(round: PromptCandidatesResult, draft: string): 
       model: round.model,
       ...(round.tier !== undefined ? { tier: round.tier } : {}),
       ...(round.skills !== undefined && round.skills.length > 0 ? { skills: round.skills } : {}),
+      ...(round.systemPromptStale !== undefined ? { systemPromptStale: round.systemPromptStale } : {}),
     },
     selected: index,
   }
@@ -510,6 +511,7 @@ function registerUi(ctx: Context): void {
             model: prior.model,
             ...(prior.tier !== undefined ? { tier: prior.tier } : {}),
             ...(prior.skills !== undefined && prior.skills.length > 0 ? { skills: prior.skills } : {}),
+        ...(prior.systemPromptStale !== undefined ? { systemPromptStale: prior.systemPromptStale } : {}),
           },
         }
       })

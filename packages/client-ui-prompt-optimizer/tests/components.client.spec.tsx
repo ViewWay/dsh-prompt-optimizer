@@ -839,6 +839,24 @@ describe('OptimizeButton context entry', () => {
   })
 })
 
+describe('PreviewPanel staleness note', () => {
+  it('renders the model-switch notice with both routes', () => {
+    render(<PreviewPanel {...panelProps({
+      ...READY,
+      result: { ...RESULT, systemPromptStale: { from: 'gateway/old-model', to: 'gateway/new-model' } },
+    })} />)
+    const note = screen.getByTestId('system-stale')
+    expect(note.textContent).toContain('gateway/old-model')
+    expect(note.textContent).toContain('gateway/new-model')
+    expect(note.textContent).toContain(zh.systemPromptStale.slice(0, 6))
+  })
+
+  it('stays silent without the flag', () => {
+    render(<PreviewPanel {...panelProps(READY)} />)
+    expect(screen.queryByTestId('system-stale')).toBeNull()
+  })
+})
+
 describe('ContextPanel', () => {
   const REPORT = {
     systemPrompt: {

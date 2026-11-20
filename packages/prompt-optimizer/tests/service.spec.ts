@@ -1881,3 +1881,105 @@ describe('PromptOptimizer.contextCheck', () => {
       .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_SESSION_UNAVAILABLE' })
   })
 })
+
+describe('PromptOptimizer system-prompt staleness', () => {
+  /** Storage stub serving every domain table by name so tracks stay separate. */
+  function trackedStorage(): Map<string, Map<string, unknown>> {
+    return new Map<string, Map<string, unknown>>()
+  }
+
+  async function withTracks(config: Partial<Config> = {}): Promise<{
+    ctx: Context
+    sessionId: SessionId
+    tables: Map<string, Map<string, unknown>>
+  }> {
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(LlmRuntime)
+    ctx.llm.registerAdapter(['current-route', 'other-route'], new RecordingAdapter(envelope('优化后', [])))
+    const tables = trackedStorage()
+    ctx.provide('storageDomain', {
+      open: async () => ({
+        table: (name: string) => {
+          const table = tables.get(name) ?? new Map<string, unknown>()
+          tables.set(name, table)
+          return {
+            get: (key: string) => table.get(key),
+            put: async (key: string, value: unknown) => { table.set(key, value) },
+            delete: async (key: string) => table.delete(key),
+            entries: () => table.entries(),
+          }
+        },
+      }),
+    } as never)
+    await ctx.plugin(PromptOptimizer, { ...CONFIG, metrics: true, ...config })
+    const session = ctx.sessions.create(SessionId('stale-session'))
+    session.append('request/header', {
+      header: { config: { provider: 'current-route', model: 'current-model' } },
+      reason: 'initial',
+    })
+    return { ctx, sessionId: session.id, tables }
+  }
+
+  const systemRound = async (ctx: Context, sessionId: SessionId): Promise<void> => {
+    await ctx.promptOptimizer.optimize(
+      { sessionId, text: '你是一名代码评审员', target: 'system', force: true }, new AbortController().signal,
+    )
+  }
+
+  it('records the tuning route on a system round and stays quiet on the same route', async () => {
+    const { ctx, sessionId, tables } = await withTracks()
+    await systemRound(ctx, sessionId)
+    expect(tables.get('tracks')).toHaveLength(1)
+    expect([...tables.get('tracks')!.values()][0]).toMatchObject({
+      sessionId, provider: 'current-route', model: 'current-model', tier: 'standard',
+    })
+
+    const draft = await ctx.promptOptimizer.optimize({ sessionId, text: '帮我写脚本' }, new AbortController().signal)
+    expect(draft.systemPromptStale).toBeUndefined()
+  })
+
+  it('flags staleness on later rounds once the session switches models', async () => {
+    const { ctx, sessionId } = await withTracks()
+    await systemRound(ctx, sessionId)
+    const session = ctx.sessions.get(sessionId)!
+    session.append('request/header', {
+      header: { config: { provider: 'current-route', model: 'other-model' } },
+      reason: 'model switch',
+    })
+
+    const draft = await ctx.promptOptimizer.optimize({ sessionId, text: '帮我写脚本' }, new AbortController().signal)
+    expect(draft.systemPromptStale).toEqual({ from: 'current-route/current-model', to: 'current-route/other-model' })
+
+    const candidates = await ctx.promptOptimizer.optimizeCandidates(
+      { sessionId, text: '帮我写脚本', count: 2, force: true }, new AbortController().signal,
+    )
+    expect(candidates.systemPromptStale).toEqual({ from: 'current-route/current-model', to: 'current-route/other-model' })
+  })
+
+  it('clears the notice after a fresh system round on the new model', async () => {
+    const { ctx, sessionId } = await withTracks()
+    await systemRound(ctx, sessionId)
+    ctx.sessions.get(sessionId)!.append('request/header', {
+      header: { config: { provider: 'current-route', model: 'other-model' } },
+      reason: 'model switch',
+    })
+    await systemRound(ctx, sessionId)
+
+    const draft = await ctx.promptOptimizer.optimize({ sessionId, text: '帮我写脚本' }, new AbortController().signal)
+    expect(draft.systemPromptStale).toBeUndefined()
+  })
+
+  it('stays quiet when metrics is off', async () => {
+    const { ctx, sessionId, tables } = await withTracks({ metrics: false })
+    await systemRound(ctx, sessionId)
+    expect(tables.get('tracks')).toBeUndefined()
+    ctx.sessions.get(sessionId)!.append('request/header', {
+      header: { config: { provider: 'other-route', model: 'other-model' } },
+      reason: 'model switch',
+    })
+    const draft = await ctx.promptOptimizer.optimize({ sessionId, text: '帮我写脚本' }, new AbortController().signal)
+    expect(draft.systemPromptStale).toBeUndefined()
+  })
+})
