@@ -13,6 +13,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   PromptCandidatesResult,
   PromptClarification,
+  PromptDistillResult,
   PromptLibraryEntry,
   PromptMetricsSummary,
   PromptOptimizeDirection,
@@ -574,6 +575,18 @@ function registerUi(ctx: Context): void {
     evolveRole: async (sessionId: SessionId, role: string, draft: string, optimized: string, confirm?: boolean): Promise<PromptRoleEvolveResult> => {
       const result = await ctx.remote.promptOptimizer.evolveRole(
         { sessionId, role, draft, optimized, ...(confirm === true ? { confirm: true } : {}) }, new AbortController().signal,
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
+    },
+    distillSkill: async (sessionId: SessionId, draft: string, optimized: string, clarifications?: readonly PromptClarification[], confirm?: boolean): Promise<PromptDistillResult> => {
+      const result = await ctx.remote.promptOptimizer.distillSkill(
+        {
+          sessionId, draft, optimized,
+          ...(clarifications !== undefined && clarifications.length > 0 ? { clarifications } : {}),
+          ...(confirm === true ? { confirm: true } : {}),
+        },
+        new AbortController().signal,
       )
       if (!result.ok) throw new Error(result.error.message)
       return result.value

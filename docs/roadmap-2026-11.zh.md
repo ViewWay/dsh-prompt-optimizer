@@ -39,9 +39,11 @@
 - 生成 N 候选 + LLM-judge 打分 + 帕累托展示（P2b ✅ 已落地，分支 `feat/p2b-judge`：顺序生成 2–4 候选、兄弟候选注入求差异化、judge 三维打分 + BEST 推荐位、帕累托前沿标记、judge 失败降级为无分候选；`candidates-generated`/`judge-score` 两类指标行与设置页平均分；全量 check 272/272）
 - 元提示模板任何改动先跑回归，防劣化；模型切换时提示「system prompt 是为旧模型调的，要重新优化吗」（P2c，未做）
 
-### P3：SKILL.md 蒸馏（原 P9）
+### P3：SKILL.md 蒸馏（原 P9）✅ 已落地
 
 重复检测触发（同类草稿第三次优化时主动建议），把优化结果蒸馏为 SKILL.md（渐进披露、引用一层深），沉淀一次性价值为持久资产。`evolveRole` 的下一站产出 SKILL.md 格式。
+
+已落地形态（分支 `feat/p2b-judge` 同支）：`prompt_optimizer_repeats` 存储域按归一化草稿哈希计数（不存内容，随 `metrics` 开关），第三次命中时结果携带 `suggestDistill`；`distillSkill` RPC 两阶段（预览轮 + 确认写盘，镜像 evolveRole），写入会话项目 `.dsh/skills/<name>/SKILL.md`（`distillDir` 可覆盖，同名先备份 `.bak`），文件系统 provider 即时收录；面板建议块 + 定义预览 + 确认/放弃；`distilled` 指标行与设置页计数。全量 check 288/288。
 
 ### P4：上下文体检（context doctor）
 

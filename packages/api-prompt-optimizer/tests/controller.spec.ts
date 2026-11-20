@@ -265,3 +265,34 @@ it('wraps a candidates failure as the typed Remote error', async () => {
   await expect(api.optimizeCandidates({ sessionId: 'session-1' as never, text: 'draft' }, new AbortController().signal))
     .rejects.toMatchObject({ code: 'prompt-optimizer/candidates-failed', details: { reason: 'no adapter' } })
 })
+
+const DISTILL_RESULT = {
+  name: 'uart-debugging',
+  description: 'Draft UART debugging prompts',
+  bytes: 210,
+  targetDir: '/proj/.dsh/skills',
+  pendingDefinition: '---\nname: uart-debugging\n---\n…',
+}
+
+it('forwards a distillation request to the capability service unchanged', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const distillSkill = vi.fn(async () => DISTILL_RESULT)
+  ctx.provide('promptOptimizer', { distillSkill } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = { sessionId: 'session-1' as never, draft: '草稿', optimized: '优化后' }
+
+  await expect(api.distillSkill(request, new AbortController().signal)).resolves.toEqual(DISTILL_RESULT)
+  expect(distillSkill).toHaveBeenCalledExactlyOnceWith(request, expect.any(AbortSignal))
+})
+
+it('wraps a distillation failure as the typed Remote error', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  ctx.provide('promptOptimizer', { distillSkill: vi.fn(async () => { throw new Error('no target') }) } as never)
+  const api = new PromptOptimizerController(ctx)
+
+  await expect(api.distillSkill(
+    { sessionId: 'session-1' as never, draft: 'd', optimized: 'o' }, new AbortController().signal,
+  )).rejects.toMatchObject({ code: 'prompt-optimizer/distill-failed', details: { reason: 'no target' } })
+})

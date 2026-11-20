@@ -105,6 +105,7 @@ export function PromptOptimizerSettings(props: PromptOptimizerSettingsProps) {
               rounds: String(metrics.candidatesRounds),
               average: metrics.judgeAverage === null ? '—' : metrics.judgeAverage.toFixed(1),
             })}</li>
+            <li>{t('settingsMetricsDistill', { count: String(metrics.distills) })}</li>
           </ul>}
     </div>
   </>

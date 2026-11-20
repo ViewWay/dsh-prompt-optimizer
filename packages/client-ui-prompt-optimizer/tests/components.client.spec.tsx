@@ -22,7 +22,7 @@ const SESSION = 'session-1' as SessionId
 const EMPTY_METRICS = {
   adopted: 0, rejected: 0, declined: 0, declineOverridden: 0,
   interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
-  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null,
+  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null, distills: 0,
   adoptionRate: null, verifyPassRate: null, rows: 0,
 }
 const t: OptimizeButtonProps['t'] = (key, params) => {
@@ -258,6 +258,7 @@ function panelProps(state: OptimizationState | undefined, actions: Partial<Previ
     regenerateWithDirection: vi.fn(),
     regenerateCandidates: vi.fn(),
     selectCandidate: vi.fn(),
+    distillSkill: vi.fn(async () => ({ name: 'uart-debugging', description: 'd', bytes: 96, targetDir: '/proj/.dsh/skills' })),
     regenerateForced: vi.fn(),
     reInterview: vi.fn(),
     answerInterview: vi.fn(),
@@ -823,6 +824,53 @@ function libraryProps(overrides: Partial<LibraryPanelInjected> = {}): LibraryPan
   }
 }
 
+
+
+describe('PreviewPanel distillation', () => {
+  const DISTILL = { name: 'uart-debugging', description: 'Draft UART debugging prompts', bytes: 210, targetDir: '/proj/.dsh/skills' }
+
+  it('renders the suggestion with a trigger only when the host suggested it', () => {
+    render(<PreviewPanel {...panelProps({ ...READY, result: { ...RESULT, suggestDistill: true } })} />)
+    expect(screen.getByTestId('distill-suggest').textContent).toContain(zh.distillSuggest.slice(0, 8))
+    expect(screen.getByTestId('distill-trigger')).toBeTruthy()
+    cleanup()
+    render(<PreviewPanel {...panelProps(READY)} />)
+    expect(screen.queryByTestId('distill-suggest')).toBeNull()
+  })
+
+  it('previews the distilled definition and confirms through the two-step flow', async () => {
+    const distillSkill = vi.fn(async (_session: never, _draft: string, _optimized: string, _clarifications?: never, confirm?: boolean) =>
+      confirm === true
+        ? { ...DISTILL }
+        : { ...DISTILL, pendingDefinition: '---\nname: uart-debugging\n---\n\n# 技能' })
+    render(<PreviewPanel {...panelProps(
+      { ...READY, clarifications: [{ question: '芯片？', answer: 'STM32' }], result: { ...RESULT, suggestDistill: true } },
+      { distillSkill: distillSkill as never },
+    )} />)
+    screen.getByTestId('distill-trigger').click()
+    const review = await waitFor(() => screen.getByTestId('distill-review'))
+    expect(review.textContent).toContain('/proj/.dsh/skills')
+    expect(screen.getByTestId('distill-review-definition').textContent).toContain('name: uart-debugging')
+    expect(distillSkill).toHaveBeenCalledExactlyOnceWith(SESSION, '原始草稿', '优化后的提示词', [{ question: '芯片？', answer: 'STM32' }])
+
+    screen.getByTestId('distill-confirm').click()
+    await waitFor(() => { expect(screen.getByTestId('distill-done').textContent).toContain('uart-debugging') })
+    expect(distillSkill).toHaveBeenLastCalledWith(SESSION, '原始草稿', '优化后的提示词', [{ question: '芯片？', answer: 'STM32' }], true)
+  })
+
+  it('discards a staged definition without writing', async () => {
+    const distillSkill = vi.fn(async () => ({ ...DISTILL, pendingDefinition: '---\nname: uart-debugging\n---\n\n# 技能' }))
+    render(<PreviewPanel {...panelProps(
+      { ...READY, result: { ...RESULT, suggestDistill: true } },
+      { distillSkill: distillSkill as never },
+    )} />)
+    screen.getByTestId('distill-trigger').click()
+    await waitFor(() => { expect(screen.getByTestId('distill-review')).toBeTruthy() })
+    screen.getByTestId('distill-discard').click()
+    await waitFor(() => { expect(screen.queryByTestId('distill-review')).toBeNull() })
+    expect(distillSkill).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('PreviewPanel candidates', () => {
   const CANDIDATES = [

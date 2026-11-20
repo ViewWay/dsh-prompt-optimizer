@@ -7,6 +7,8 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   PromptCandidatesRequest,
   PromptCandidatesResult,
+  PromptDistillRequest,
+  PromptDistillResult,
   PromptInterviewRequest,
   PromptInterviewResult,
   PromptLibraryDeleteRequest,
@@ -28,6 +30,7 @@ import type {
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace$70726f6d70744f7074696d697a6572 {
     deletePrompt: (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
+    distillSkill: (request: PromptDistillRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptDistillResult>>
     evolveRole: (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
     interview: (request: PromptInterviewRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptInterviewResult>>
     listMetrics: (signal?: AbortSignal) => Promise<RemoteResult<PromptMetricsSummary>>
@@ -42,6 +45,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   }
   interface TypertRemoteMap {
     'promptOptimizer/deletePrompt': (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
+    'promptOptimizer/distillSkill': (request: PromptDistillRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptDistillResult>>
     'promptOptimizer/evolveRole': (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
     'promptOptimizer/interview': (request: PromptInterviewRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptInterviewResult>>
     'promptOptimizer/listMetrics': (signal?: AbortSignal) => Promise<RemoteResult<PromptMetricsSummary>>
@@ -79,6 +83,25 @@ const _deletePrompt_parameter_0 = () => (_deletePrompt_parameter_0$value ??= z.o
 }))
 let _deletePrompt_result$value
 const _deletePrompt_result = () => (_deletePrompt_result$value ??= z.void())
+let _distillSkill_parameter_0$value
+const _distillSkill_parameter_0 = () => (_distillSkill_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session that produced the round; owns the evolution log and the distill target fallback.'),
+  'draft': z.string().readonly().describe('Complete draft text the round optimized.'),
+  'optimized': z.string().readonly().describe('Complete optimized text the round produced.'),
+  'clarifications': z.array(z.object({
+    'question': z.string().readonly().describe('The question text exactly as the interview round asked it.'),
+    'answer': z.string().readonly().describe('The user\'s answer, verbatim.'),
+  })).readonly().optional().describe('Interview answers the round carried; they condition what the skill must preserve.'),
+  'confirm': z.boolean().readonly().optional().describe('True commits the pending preview for this session and writes the skill file; absent/false returns a preview without writing.'),
+}))
+let _distillSkill_result$value
+const _distillSkill_result = () => (_distillSkill_result$value ??= z.object({
+  'name': z.string().readonly().describe('Kebab-case skill name parsed from the produced definition.'),
+  'description': z.string().readonly().describe('One-line routing description parsed from the produced definition.'),
+  'bytes': z.number().readonly().describe('UTF-8 byte size of the previewed or written definition.'),
+  'targetDir': z.string().readonly().describe('Directory the confirm phase writes `<name>/SKILL.md` into.'),
+  'pendingDefinition': z.string().readonly().optional().describe('The previewed SKILL.md awaiting confirmation; present only on preview results.'),
+}))
 let _evolveRole_parameter_0$value
 const _evolveRole_parameter_0 = () => (_evolveRole_parameter_0$value ??= z.object({
   'sessionId': z.string().readonly().describe('Session that produced the round; owns the evolution log and route fallback.'),
@@ -157,6 +180,7 @@ const _optimize_result = () => (_optimize_result$value ??= z.object({
   'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional().describe('Capability tier of the route that produced (or would produce) the result.'),
   'skipped': z.boolean().readonly().optional().describe('True when the precheck declined to rewrite; `optimizedText` then equals the draft verbatim.'),
   'skipReason': z.literal('reasoning-short-clear').readonly().optional().describe('Stable reason the precheck declined; present exactly when `skipped` is true.'),
+  'suggestDistill': z.boolean().readonly().optional().describe('True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill.'),
   'usage': z.object({
     'inputTokens': z.number(),
     'outputTokens': z.number(),
@@ -209,6 +233,7 @@ const _optimizeCandidates_result = () => (_optimizeCandidates_result$value ??= z
   'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional().describe('Capability tier of the route that produced the candidates.'),
   'skipped': z.boolean().readonly().optional().describe('True when the precheck declined the rounds; `candidates` is then empty.'),
   'skipReason': z.literal('reasoning-short-clear').readonly().optional().describe('Stable reason the precheck declined; present exactly when `skipped` is true.'),
+  'suggestDistill': z.boolean().readonly().optional().describe('True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill.'),
   'usage': z.object({
     'inputTokens': z.number(),
     'outputTokens': z.number(),
@@ -286,6 +311,17 @@ let _deletePrompt_parameter_0_strict$value
 const _deletePrompt_parameter_0_strict = () => (_deletePrompt_parameter_0_strict$value ??= z.strictObject({
   'sessionId': z.string().readonly(),
   'id': z.string().readonly(),
+}))
+let _distillSkill_parameter_0_strict$value
+const _distillSkill_parameter_0_strict = () => (_distillSkill_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+  'draft': z.string().readonly(),
+  'optimized': z.string().readonly(),
+  'clarifications': z.array(z.object({
+    'question': z.string().readonly(),
+    'answer': z.string().readonly(),
+  })).readonly().optional(),
+  'confirm': z.boolean().readonly().optional(),
 }))
 let _evolveRole_parameter_0_strict$value
 const _evolveRole_parameter_0_strict = () => (_evolveRole_parameter_0_strict$value ??= z.strictObject({
@@ -384,6 +420,39 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         jsonSchemaError: 'typert tool schema: unsupported void value',
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 117, column: 9 },
+    },
+    'promptOptimizer/distillSkill': {
+      service: 'promptOptimizerController',
+      description: 'Distill one completed round into a durable agent skill file through the capability service: a preview round, then a confirming write.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'producing session, the round\'s texts, answers, and the phase selector.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptDistillRequest',
+            create: _distillSkill_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, confirm: { type: 'boolean' } }, required: ['sessionId', 'draft', 'optimized'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptDistillRequest',
+            create: _distillSkill_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, confirm: { type: 'boolean' } }, required: ['sessionId', 'draft', 'optimized'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptDistillResult',
+        create: _distillSkill_result,
+        description: 'the distilled skill\'s identity plus the pending definition on previews.',
+        jsonSchema: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, bytes: { type: 'number' }, targetDir: { type: 'string' }, pendingDefinition: { type: 'string' } }, required: ['name', 'description', 'bytes', 'targetDir'], additionalProperties: true },
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 82, column: 9 },
     },
     'promptOptimizer/evolveRole': {
       service: 'promptOptimizerController',
@@ -525,7 +594,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeResult',
         create: _optimize_result,
         description: 'the parsed optimization result for preview.',
-        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, suggestDistill: { type: 'boolean' }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 43, column: 9 },
     },
@@ -558,7 +627,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptCandidatesResult',
         create: _optimizeCandidates_result,
         description: 'the scored candidates with the recommended index.',
-        jsonSchema: { type: 'object', properties: { candidates: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, scores: { type: 'object', properties: { faithfulness: { type: 'number' }, completeness: { type: 'number' }, clarity: { type: 'number' } }, required: ['faithfulness', 'completeness', 'clarity'], additionalProperties: true }, total: { type: 'number' }, pareto: { type: 'boolean' }, recommended: { type: 'boolean' } }, required: ['label', 'optimizedText', 'changes', 'acceptance', 'pareto', 'recommended'], additionalProperties: true } }, recommended: { type: 'number' }, judgeFailed: { type: 'boolean' }, judgeError: { type: 'string' }, provider: { type: 'string' }, model: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['candidates', 'recommended', 'provider', 'model'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { candidates: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, scores: { type: 'object', properties: { faithfulness: { type: 'number' }, completeness: { type: 'number' }, clarity: { type: 'number' } }, required: ['faithfulness', 'completeness', 'clarity'], additionalProperties: true }, total: { type: 'number' }, pareto: { type: 'boolean' }, recommended: { type: 'boolean' } }, required: ['label', 'optimizedText', 'changes', 'acceptance', 'pareto', 'recommended'], additionalProperties: true } }, recommended: { type: 'number' }, judgeFailed: { type: 'boolean' }, judgeError: { type: 'string' }, provider: { type: 'string' }, model: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, suggestDistill: { type: 'boolean' }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['candidates', 'recommended', 'provider', 'model'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 62, column: 9 },
     },

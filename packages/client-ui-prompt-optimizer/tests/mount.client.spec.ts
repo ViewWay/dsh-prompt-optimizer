@@ -31,7 +31,7 @@ const SESSION = 'session-1' as SessionId
 const EMPTY_METRICS = {
   adopted: 0, rejected: 0, declined: 0, declineOverridden: 0,
   interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
-  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null,
+  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null, distills: 0,
   adoptionRate: null, verifyPassRate: null, rows: 0,
 }
 const RESULT = {
@@ -118,6 +118,7 @@ type MountedActions = {
   regenerateAsRole: (sessionId: SessionId, role: string | undefined) => void
   regenerateCandidates: (sessionId: SessionId) => void
   selectCandidate: (sessionId: SessionId, index: number) => void
+  distillSkill: (sessionId: SessionId, draft: string, optimized: string, clarifications?: readonly { question: string; answer: string }[], confirm?: boolean) => Promise<unknown>
   startInterview: (sessionId: SessionId, text: string, apply: (text: string) => void, role?: string) => void
   answerInterview: (sessionId: SessionId, index: number, value: string) => void
   submitInterview: (sessionId: SessionId) => void
@@ -531,6 +532,42 @@ it('runs a candidates round, reports the discarded result, and switches the pick
 
     actions.apply(SESSION)
     expect(applied).toEqual(['候选甲'])
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('distills a suggested round through the preview-then-confirm flow', async () => {
+  const DISTILL_PREVIEW = {
+    name: 'uart-debugging',
+    description: 'Draft UART debugging prompts',
+    bytes: 210,
+    targetDir: '/proj/.dsh/skills',
+    pendingDefinition: '---\nname: uart-debugging\ndescription: d\n---\n\n# 技能',
+  }
+  const distillSkill = vi.fn(async (_request: unknown, _signal?: AbortSignal) =>
+    _signal === undefined || (_request as { confirm?: boolean }).confirm !== true
+      ? { ok: true as const, value: DISTILL_PREVIEW }
+      : { ok: true as const, value: { name: 'uart-debugging', description: 'Draft UART debugging prompts', bytes: 210, targetDir: '/proj/.dsh/skills' } })
+  const suggested = {
+    optimize: vi.fn(async () => ({ ok: true as const, value: { ...RESULT, suggestDistill: true } })),
+  }
+  const b = await fixture(suggested.optimize, undefined, true, { distillSkill })
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx)
+    actions.start(SESSION, 'draft', () => {})
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+    expect(stateOf(b.ctx)?.result?.suggestDistill).toBe(true)
+
+    const preview = await actions.distillSkill(SESSION, 'draft', '优化后的提示词', [{ question: '芯片？', answer: 'STM32' }])
+    expect(distillSkill).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: SESSION, draft: 'draft', optimized: '优化后的提示词', clarifications: [{ question: '芯片？', answer: 'STM32' }],
+    }), expect.any(AbortSignal))
+    expect((preview as { pendingDefinition?: string }).pendingDefinition).toBeDefined()
+
+    await actions.distillSkill(SESSION, 'draft', '优化后的提示词', undefined, true)
+    expect(distillSkill).toHaveBeenLastCalledWith(expect.objectContaining({ confirm: true }), expect.any(AbortSignal))
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }
 })

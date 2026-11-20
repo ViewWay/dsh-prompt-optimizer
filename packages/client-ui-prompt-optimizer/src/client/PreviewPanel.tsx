@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, IconCheckOutlineRegular, IconCloseOutlineRegular, IconRefreshOutlineRegular, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ModelTier, PromptOptimizeDirection, PromptRoleEvolveResult, PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
+import type { ModelTier, PromptClarification, PromptDistillResult, PromptOptimizeDirection, PromptRoleEvolveResult, PromptRoleSummary, PromptVerifyResult } from '@yimiliya/dsh-prompt-optimizer/types'
 import type { PromptOptimizationPreview, OptimizationSnapshot } from './optimization.ts'
 import type { PromptOptimizerKey } from './locales.ts'
 import { usePromptRoles } from './use-prompt-roles.ts'
@@ -103,6 +103,21 @@ export interface PreviewPanelActions {
     optimized: string,
     confirm?: boolean,
   ) => Promise<PromptRoleEvolveResult>
+  /** Distill the round into a durable agent skill file; without confirm it only stages a preview
+   * (result.pendingDefinition) and writes nothing, with confirm it commits.
+   * @param sessionId - Session whose preview is open.
+   * @param draft - complete draft text the round optimized.
+   * @param optimized - complete optimized text the round produced.
+   * @param clarifications - interview answers the round carried; they condition the skill.
+   * @param confirm - true commits the staged preview; absent requests a preview only.
+   */
+  distillSkill: (
+    sessionId: PromptOptimizationPreview['sessionId'],
+    draft: string,
+    optimized: string,
+    clarifications?: readonly PromptClarification[],
+    confirm?: boolean,
+  ) => Promise<PromptDistillResult>
 }
 
 /** Inject face shared by the mount: preview verbs plus the state hook source. */
@@ -183,16 +198,27 @@ interface EvolutionState {
 
 const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, error: undefined, pending: undefined }
 
+/** Distill-button view state; `pending` holds the staged SKILL.md awaiting review. */
+interface DistillState {
+  readonly running: boolean
+  readonly doneName: string | undefined
+  readonly error: string | undefined
+  readonly pending: PromptDistillResult | undefined
+}
+
+const DISTILL_IDLE: DistillState = { running: false, doneName: undefined, error: undefined, pending: undefined }
+
 /** Render one Session's optimization preview in the composer seat. */
 export function PreviewPanel(props: PreviewPanelProps) {
   const { matched, apply, regenerate, regenerateAsSystem, regenerateForced, regenerateAsRole, regenerateWithDirection, regenerateCandidates, selectCandidate, cancel, loadRoles } = props
-  const { verifyCheck, saveToLibrary, evolveRole, reInterview, answerInterview, submitInterview, skipInterview, useOptimization, t } = props
+  const { verifyCheck, saveToLibrary, evolveRole, distillSkill, reInterview, answerInterview, submitInterview, skipInterview, useOptimization, t } = props
   const state = useOptimization(snapshot => snapshot[matched.sessionId])
   const [rolesRevision, setRolesRevision] = useState(0)
   const roles = usePromptRoles(loadRoles, rolesRevision)
   const [checks, setChecks] = useState<Record<string, CheckState>>({})
   const [library, setLibrary] = useState<LibraryState>(LIBRARY_IDLE)
   const [evolution, setEvolution] = useState<EvolutionState>(EVOLUTION_IDLE)
+  const [distillation, setDistillation] = useState<DistillState>(DISTILL_IDLE)
   const [critiqueCopyFailed, setCritiqueCopyFailed] = useState(false)
   if (state === undefined) return null
   const ready = state.phase === 'ready' && state.result !== undefined
@@ -284,6 +310,46 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const evolveDiscard = (): void => {
     if (evolution.running) return
     setEvolution(EVOLUTION_IDLE)
+  }
+
+  const distill = (): void => {
+    const result = state.result
+    if (result === undefined || distillation.running || distillation.pending !== undefined) return
+    setDistillation({ running: true, doneName: undefined, error: undefined, pending: undefined })
+    void (async () => {
+      try {
+        const distilled = await distillSkill(matched.sessionId, state.draft, result.optimizedText, state.clarifications)
+        if (distilled.pendingDefinition !== undefined) {
+          setDistillation({ running: false, doneName: undefined, error: undefined, pending: distilled })
+          return
+        }
+        setDistillation({ running: false, doneName: distilled.name, error: undefined, pending: undefined })
+      } catch (failure) {
+        const message = failure instanceof Error ? failure.message : String(failure)
+        setDistillation({ running: false, doneName: undefined, error: message, pending: undefined })
+      }
+    })()
+  }
+
+  const distillConfirm = (): void => {
+    const result = state.result
+    if (result === undefined || distillation.running || distillation.pending === undefined) return
+    setDistillation(draft => ({ ...draft, running: true, error: undefined }))
+    void (async () => {
+      try {
+        const distilled = await distillSkill(matched.sessionId, state.draft, result.optimizedText, state.clarifications, true)
+        setDistillation({ running: false, doneName: distilled.name, error: undefined, pending: undefined })
+      } catch (failure) {
+        const message = failure instanceof Error ? failure.message : String(failure)
+        // Keep the staged definition: the failure may be transient and the review must stay readable.
+        setDistillation(draft => ({ ...draft, running: false, error: message }))
+      }
+    })()
+  }
+
+  const distillDiscard = (): void => {
+    if (distillation.running) return
+    setDistillation(DISTILL_IDLE)
   }
 
   return (
@@ -429,6 +495,51 @@ export function PreviewPanel(props: PreviewPanelProps) {
         {ready && state.candidates !== undefined && state.candidates.length > 0
           && state.candidates.every(candidate => candidate.scores === undefined)
           ? <p className={css.noChanges} data-testid="candidates-unjudged">{t('judgeUnavailable')}</p>
+          : null}
+        {ready && !skipped && state.result.suggestDistill === true && distillation.pending === undefined && distillation.doneName === undefined
+          ? <div className={css.critique} data-testid="distill-suggest">
+            <p className={css.noChanges}>{t('distillSuggest')}</p>
+            <div className={css.critiqueActions}>
+              <Button
+                size="sm" type="button"
+                disabled={distillation.running}
+                onClick={() => { distill() }}
+                data-testid="distill-trigger"
+              >
+                {t('distillTrigger')}
+              </Button>
+              {distillation.error !== undefined
+                ? <span className={css.failed} role="alert" data-testid="distill-error">{t('distillFailed')}</span>
+                : null}
+            </div>
+          </div>
+          : null}
+        {distillation.pending !== undefined
+          ? <div className={css.critique} data-testid="distill-review">
+            <span className={css.columnTitle}>{t('distillPreviewTitle')}</span>
+            <p className={css.noChanges}>{t('distillTarget', { dir: distillation.pending.targetDir })}</p>
+            <pre className={css.checkOutput} data-testid="distill-review-definition">{distillation.pending.pendingDefinition}</pre>
+            <div className={css.critiqueActions}>
+              <Button
+                size="sm" type="button" disabled={distillation.running}
+                onClick={() => { distillConfirm() }} data-testid="distill-confirm"
+              >
+                {t('distillConfirm')}
+              </Button>
+              <Button
+                size="sm" type="button" disabled={distillation.running}
+                onClick={() => { distillDiscard() }} data-testid="distill-discard"
+              >
+                {t('distillDiscard')}
+              </Button>
+            </div>
+          </div>
+          : null}
+        {distillation.doneName !== undefined
+          ? <p className={css.passed} data-testid="distill-done">{t('distillDone', { name: distillation.doneName })}</p>
+          : null}
+        {distillation.pending === undefined && distillation.doneName === undefined && distillation.error !== undefined
+          ? <p className={css.error} data-testid="distill-failed" role="alert">{t('distillFailed')}</p>
           : null}
         {skipped && state.result.skipReason !== undefined
           ? <div className={css.critique} data-testid="optimization-skip">

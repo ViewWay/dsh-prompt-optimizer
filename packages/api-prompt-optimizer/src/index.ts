@@ -5,6 +5,8 @@ import type {} from '@yimiliya/dsh-prompt-optimizer'
 import type {
   PromptCandidatesRequest,
   PromptCandidatesResult,
+  PromptDistillRequest,
+  PromptDistillResult,
   PromptInterviewRequest,
   PromptInterviewResult,
   PromptLibraryDeleteRequest,
@@ -74,6 +76,25 @@ export default class PromptOptimizerController extends TypertRemoteService {
       signal.throwIfAborted()
       const reason = error instanceof Error ? error.message : String(error)
       throw new RemoteError('prompt-optimizer/candidates-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Distill one completed round into a durable agent skill file through the
+   * capability service: a preview round, then a confirming write.
+   * @param request - producing session, the round's texts, answers, and the phase selector.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   * @returns the distilled skill's identity plus the pending definition on previews.
+   */
+  @Remote
+  async distillSkill(request: PromptDistillRequest, signal: AbortSignal): Promise<PromptDistillResult> {
+    signal.throwIfAborted()
+    try {
+      return await this.ctx.promptOptimizer.distillSkill(request, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/distill-failed', reason, { reason }, { cause: error })
     }
   }
 

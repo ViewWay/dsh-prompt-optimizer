@@ -644,6 +644,107 @@ export function paretoFlags(scores: readonly (PromptCandidateScores | undefined)
 }
 
 /**
+ * The distillation system prompt: condense one completed round (draft plus its
+ * optimized result and the user's authoritative answers) into one durable
+ * agent-skill file — the recurring intent, the constraints the rewrite pinned,
+ * and how to reproduce this kind of prompt — so the third time the user drafts
+ * the same thing, the skill answers instead of another rewrite.
+ * @returns exact system prompt text for one distillation round.
+ */
+export function distillationSystemPrompt(): string {
+  return [
+    'You are a skill distiller. The user gives you one draft prompt, its optimized rewrite, and the answers the user gave while clarifying the draft. Produce one agent skill file that captures this recurring prompt shape as durable, reusable instructions.',
+    '',
+    'Rules:',
+    "1. Output only the skill file: YAML frontmatter, then the markdown body. No preamble, no closing remarks, no code fences around the whole file.",
+    '2. Frontmatter keys, exactly two lines: `name:` a kebab-case id (lowercase letters, digits, single hyphens) naming the prompt shape, and `description:` one line (at most 200 characters) saying what task shape this skill covers and when to reach for it.',
+    '3. Body structure, in this order: a `# ` title; a short "When to use" section; a "Captured requirements" checklist distilling every constraint, input, and success criterion the optimized prompt and the answers pinned; an "Output shape" section stating the expected deliverable; and a compact worked example distilled from the given materials.',
+    '4. Progressive disclosure: keep the body under 120 lines; the checklist carries the load, never retell the draft verbatim.',
+    '5. Reference at most one level deep: the body may mention files by relative path inside the skill directory, but assume none exist — never depend on them.',
+    '6. Never invent facts, tools, thresholds, or requirements the materials do not support; never mention this plugin, the rewrite, or the distillation.',
+    '7. Write the body in the language the optimized result is written in; keep the `name` value and code identifiers in their original form.',
+  ].join('\n')
+}
+
+/**
+ * Frame the round's materials as the distillation round's user input.
+ * @param draft - complete original draft text.
+ * @param optimized - complete optimized text the round produced.
+ * @param clarifications - interview answers the round carried.
+ * @returns exact user input for the distillation round.
+ */
+export function distillationUserInput(
+  draft: string,
+  optimized: string,
+  clarifications: readonly PromptClarification[],
+): string {
+  const answers = clarifications.map(pair => `Q: ${pair.question}\nA: ${pair.answer}`).join('\n\n')
+  return [
+    'Distill the completed optimization round below into one agent skill file.',
+    '',
+    '--- original draft ---',
+    draft,
+    '',
+    '--- optimized result ---',
+    optimized,
+    ...(clarifications.length === 0
+      ? []
+      : ['', '--- the user\'s authoritative answers ---', answers]),
+    '',
+    'Output only the skill file in the required format.',
+  ].join('\n')
+}
+
+/** One parsed skill definition: frontmatter identity plus the full file text. */
+export interface ParsedSkillDefinition {
+  /** Kebab-case `name:` frontmatter value. */
+  readonly name: string
+  /** One-line `description:` frontmatter value. */
+  readonly description: string
+  /** Complete definition file text, frontmatter included. */
+  readonly definition: string
+}
+
+/** Kebab-case skill-name grammar mirrored from the harness skill registry. */
+const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+/** Longest description line accepted from produced frontmatter. */
+const SKILL_DESCRIPTION_MAX_CHARS = 200
+
+/**
+ * Parse one model response into a validated skill definition. The frontmatter
+ * block must carry `name:` (kebab-case) and `description:` (one line); quoted
+ * values are unwrapped; anything that fails the shape rejects the round.
+ * @param response - complete assembled distillation response.
+ * @returns the parsed definition.
+ * @throws when no frontmatter block exists or name/description fail validation.
+ */
+export function parseSkillDefinition(response: string): ParsedSkillDefinition {
+  const fenced = response.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '')
+  const match = /^---\n([\s\S]*?)\n---/.exec(fenced.trimStart())
+  if (match === null) {
+    throw new Error('the skill definition must start with a YAML frontmatter block')
+  }
+  const frontmatter = match[1]!
+  const unquote = (value: string): string => {
+    const trimmed = value.trim()
+    return (trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      ? trimmed.slice(1, -1)
+      : trimmed
+  }
+  const nameLine = frontmatter.split('\n').find(line => /^name:\s*/.test(line))
+  const descriptionLine = frontmatter.split('\n').find(line => /^description:\s*/.test(line))
+  const name = nameLine === undefined ? '' : unquote(nameLine.replace(/^name:\s*/, ''))
+  const description = descriptionLine === undefined ? '' : unquote(descriptionLine.replace(/^description:\s*/, ''))
+  if (!SKILL_NAME_PATTERN.test(name)) {
+    throw new Error('the skill definition needs a kebab-case `name:` frontmatter value')
+  }
+  if (description === '' || description.length > SKILL_DESCRIPTION_MAX_CHARS) {
+    throw new Error(`the skill definition needs a one-line \`description:\` frontmatter value of at most ${String(SKILL_DESCRIPTION_MAX_CHARS)} characters`)
+  }
+  return { name, description, definition: fenced.trim() }
+}
+
+/**
  * The role-evolution system prompt: rewrite one role definition file from the
  * materials of a completed round (current definition, draft, optimized
  * result), keeping the definition-file contract intact.

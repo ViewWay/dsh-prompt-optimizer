@@ -10,6 +10,8 @@ import {
   critiqueSystemPrompt,
   critiqueUserInput,
   detectDomainPriors,
+  distillationSystemPrompt,
+  distillationUserInput,
   interviewSystemPrompt,
   interviewUserInput,
   judgeSystemPrompt,
@@ -20,6 +22,7 @@ import {
   parseInterviewResponse,
   parseJudgeResponse,
   parseOptimizerResponse,
+  parseSkillDefinition,
   paretoFlags,
   roleEvolutionSystemPrompt,
   roleEvolutionUserInput,
@@ -488,5 +491,46 @@ describe('paretoFlags', () => {
   it('keeps trade-off candidates and never marks unscored ones', () => {
     expect(paretoFlags([S(10, 5, 5), S(5, 10, 5), undefined])).toEqual([true, true, false])
     expect(paretoFlags([undefined, undefined])).toEqual([false, false])
+  })
+})
+
+describe('skill distillation prompts and parsing', () => {
+  it('declares the frontmatter contract and the body structure', () => {
+    const prompt = distillationSystemPrompt()
+    expect(prompt).toContain('name:')
+    expect(prompt).toContain('description:')
+    expect(prompt).toContain('When to use')
+    expect(prompt).toContain('one level deep')
+  })
+
+  it('frames the round materials with the answers when present', () => {
+    const plain = distillationUserInput('草稿', '优化后', [])
+    expect(plain).toContain('--- original draft ---')
+    expect(plain).toContain('--- optimized result ---')
+    expect(plain).not.toContain('authoritative answers')
+    const answered = distillationUserInput('草稿', '优化后', [{ question: '语言？', answer: 'Python' }])
+    expect(answered).toContain('Q: 语言？\nA: Python')
+  })
+
+  it('parses a fenced definition and unwraps quoted frontmatter values', () => {
+    const definition = [
+      '---',
+      'name: "release-notes-writer"',
+      "description: '起草发布说明'",
+      '---',
+      '',
+      '# 发布说明',
+      '',
+      '正文',
+    ].join('\n')
+    const parsed = parseSkillDefinition(`\`\`\`\n${definition}\n\`\`\``)
+    expect(parsed).toEqual({ name: 'release-notes-writer', description: '起草发布说明', definition })
+  })
+
+  it('rejects a missing frontmatter block, a bad name, and a bad description', () => {
+    expect(() => parseSkillDefinition('# 没有元数据')).toThrow('frontmatter')
+    expect(() => parseSkillDefinition('---\nname: 大写名字\ndescription: 描述\n---\n正文')).toThrow('kebab-case')
+    expect(() => parseSkillDefinition('---\nname: ok-skill\ndescription:\n---\n正文')).toThrow('description')
+    expect(() => parseSkillDefinition(`---\nname: ok-skill\ndescription: ${'长'.repeat(201)}\n---\n正文`)).toThrow('200')
   })
 })

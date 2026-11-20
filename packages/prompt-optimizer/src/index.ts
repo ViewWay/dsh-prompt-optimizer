@@ -18,6 +18,7 @@ declare module '@deepseek-ai/dsh-llm' {
 
 import type { ContentBlock, FinishReason, GenerateOptions, Message, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { deadline, MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+import { createHash } from 'node:crypto'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { fileURLToPath } from 'node:url'
@@ -38,6 +39,8 @@ import type {
   PromptCandidate,
   PromptCandidatesRequest,
   PromptCandidatesResult,
+  PromptDistillRequest,
+  PromptDistillResult,
   PromptClarification,
   PromptInterviewRequest,
   PromptInterviewResult,
@@ -65,6 +68,8 @@ import {
   critiqueSystemPrompt,
   critiqueUserInput,
   detectDomainPriors,
+  distillationSystemPrompt,
+  distillationUserInput,
   interviewSystemPrompt,
   interviewUserInput,
   judgeSystemPrompt,
@@ -75,6 +80,7 @@ import {
   parseInterviewResponse,
   parseJudgeResponse,
   parseOptimizerResponse,
+  parseSkillDefinition,
   paretoFlags,
   roleEvolutionSystemPrompt,
   roleEvolutionUserInput,
@@ -103,6 +109,8 @@ declare module '@deepseek-ai/dsh-session/types' {
     'plugin:prompt-optimizer/skipped': PromptOptimizerSkippedEventData
     /** Log-only record of one completed intent-clarification interview round. */
     'plugin:prompt-optimizer/interview': PromptOptimizerInterviewEventData
+    /** Log-only record of one completed skill distillation write. */
+    'plugin:prompt-optimizer/distilled': PromptOptimizerDistilledEventData
   }
 }
 
@@ -187,6 +195,16 @@ export interface PromptOptimizerVerifyEventData {
   readonly durationMs: number
 }
 
+/** One completed skill distillation write, recorded after the write. */
+export interface PromptOptimizerDistilledEventData {
+  /** Kebab-case skill name of the written definition. */
+  readonly name: string
+  /** Directory the definition was written into. */
+  readonly targetDir: string
+  /** UTF-8 byte size of the written definition. */
+  readonly bytes: number
+}
+
 /** One completed role-definition evolution, recorded after the write. */
 export interface PromptOptimizerRoleEvolvedEventData {
   /** Slug of the role whose definition was rewritten. */
@@ -221,6 +239,8 @@ export interface Config {
   readonly skipCheck: boolean
   /** Whether local optimization metrics are recorded and aggregated. */
   readonly metrics: boolean
+  /** Optional absolute directory distillation writes `<name>/SKILL.md` into; defaults to the session project's `.dsh/skills`. */
+  readonly distillDir?: string
 }
 
 /** Longest check command accepted by {@link PromptOptimizer.verify}. */
@@ -243,6 +263,12 @@ const CANDIDATE_MIN = 2
 const CANDIDATE_MAX = 4
 /** Candidate count used when a request carries none. */
 const CANDIDATE_DEFAULT = 3
+/** Completed optimizations of one normalized draft after which distillation is suggested. */
+const REPEAT_DISTILL_THRESHOLD = 3
+/** Most draft-fingerprint rows kept on disk; the oldest beyond the cap are pruned on write. */
+const REPEATS_MAX_ROWS = 500
+/** Longest distilled SKILL.md accepted from one round. */
+const SKILL_MAX_CHARS = 8000
 /** Metric kinds a client may report; host-written kinds are never accepted from the wire. */
 const CLIENT_METRIC_KINDS: readonly PromptMetricKind[] = ['adopted', 'rejected', 'decline-overridden']
 /** Most metric rows kept on disk; the oldest beyond the cap are pruned on write. */
@@ -305,6 +331,29 @@ const metricsDomainSpec = defineDomain({
       model: zod.string(),
       tier: zod.string(),
       count: zod.number(),
+    })),
+  },
+})
+
+/** Persisted repeat-fingerprint row; the storage schema validates this plain shape. */
+interface RepeatRow {
+  id: string
+  createdAt: string
+  fingerprint: string
+}
+
+/**
+ * Draft-repeat fingerprints: append-only normalized-draft hashes (never draft
+ * content) powering the "third time — distill it" suggestion.
+ */
+const repeatsDomainSpec = defineDomain({
+  name: 'prompt_optimizer_repeats',
+  version: 1,
+  tables: {
+    repeats: domainTable<string, RepeatRow>(zod.object({
+      id: zod.string(),
+      createdAt: zod.string(),
+      fingerprint: zod.string(),
     })),
   },
 })
@@ -619,6 +668,7 @@ export default class PromptOptimizer extends Service {
     skillAware: z.boolean().default(true),
     skipCheck: z.boolean().default(true),
     metrics: z.boolean().default(true),
+    distillDir: z.string(),
   })
 
   constructor(ctx: Context, private readonly config: Config) {
@@ -821,6 +871,7 @@ export default class PromptOptimizer extends Service {
     if (first.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the model returned an empty rewrite')
     }
+    const suggestDistill = await this.noteRepeat(session, request.text)
     if (target === 'draft') {
       return {
         optimizedText: first.parsed.optimizedText,
@@ -832,6 +883,7 @@ export default class PromptOptimizer extends Service {
         ...(role !== undefined ? { role: role.id } : {}),
         ...(direction !== undefined ? { direction } : {}),
         ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
+        ...(suggestDistill ? { suggestDistill: true } : {}),
         ...(first.usage !== undefined ? { usage: first.usage } : {}),
       }
     }
@@ -867,6 +919,7 @@ export default class PromptOptimizer extends Service {
       ...(role !== undefined ? { role: role.id } : {}),
       ...(direction !== undefined ? { direction } : {}),
       ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
+      ...(suggestDistill ? { suggestDistill: true } : {}),
       ...(usage !== undefined ? { usage } : {}),
     }
   }
@@ -1065,10 +1118,12 @@ export default class PromptOptimizer extends Service {
       }
     }
     const usage = sumTokenUsage([...generated.map(candidate => candidate.usage), judgeUsage])
+    const suggestDistill = await this.noteRepeat(session, request.text)
     return {
       candidates,
       recommended: recommendedIndex,
       ...(judgeError !== undefined ? { judgeFailed: true, judgeError } : {}),
+      ...(suggestDistill ? { suggestDistill: true } : {}),
       provider: route.provider,
       model: route.model,
       tier,
@@ -1711,6 +1766,186 @@ export default class PromptOptimizer extends Service {
     signal.throwIfAborted()
   }
 
+  /** Repeat-fingerprint domain handle, opened once on first use. */
+  private repeats: Promise<Domain<typeof repeatsDomainSpec>> | undefined
+
+  /**
+   * Open the repeats domain once, failing loudly when the deployment composed
+   * no storage-domain service.
+   * @returns the opened domain shared by every repeat observation.
+   */
+  private openRepeats(): Promise<Domain<typeof repeatsDomainSpec>> {
+    const domains = this.ctx.get('storageDomain')
+    if (domains === undefined) {
+      fail('PROMPT_OPTIMIZER_NO_LIBRARY', 'prompt-optimizer: no storage-domain service is composed; add dsh-storage-domain to persist repeat fingerprints')
+    }
+    this.repeats ??= domains.open(repeatsDomainSpec)
+    return this.repeats
+  }
+
+  /**
+   * Record one completed optimization of a draft as a normalized fingerprint
+   * and report whether this is the round the distillation suggestion fires.
+   * Fingerprints are one-way hashes — never draft content. Best-effort by
+   * design: a storage failure degrades to no suggestion and never fails the
+   * round it observes.
+   * @param session - live session that owns the completed round (unused beyond shape parity).
+   * @param draft - complete draft text the round optimized.
+   * @returns true exactly when this completion is the {@link REPEAT_DISTILL_THRESHOLD}-th of the same normalized draft.
+   */
+  private async noteRepeat(session: Session, draft: string): Promise<boolean> {
+    void session
+    if (!this.config.metrics) return false
+    try {
+      const fingerprint = createHash('sha256').update(draft.trim().toLowerCase().replace(/\s+/g, ' ')).digest('hex')
+      const table = (await this.openRepeats()).table('repeats')
+      const id = randomUUID()
+      await table.put(id, { id, createdAt: new Date().toISOString(), fingerprint })
+      const entries = [...table.entries()].sort((left, right) => left[1].createdAt.localeCompare(right[1].createdAt))
+      const excess = entries.length - REPEATS_MAX_ROWS
+      for (let index = 0; index < excess; index += 1) {
+        await table.delete(entries[index]![0])
+      }
+      return entries.filter(([, row]) => row.fingerprint === fingerprint).length === REPEAT_DISTILL_THRESHOLD
+    } catch (error) {
+      this.ctx.logger.warn(`prompt optimizer: recording a draft fingerprint failed: ${error instanceof Error ? error.message : String(error)}`)
+      return false
+    }
+  }
+
+  /** Distillations pending a confirming call, keyed by session id. */
+  private readonly pendingDistills = new Map<string, string>()
+
+  /**
+   * Resolve the directory the confirm phase writes `<name>/SKILL.md` into: the
+   * configured `distillDir`, else the session project's `.dsh/skills` — a root
+   * the harness skill registry lists for that project, so the distilled skill
+   * joins the agent's skill catalog immediately.
+   * @param session - live session owning the working-directory fallback.
+   * @returns the absolute target directory.
+   * @throws when neither a configured directory nor a session working directory exists.
+   */
+  private distillTargetDir(session: Session): string {
+    if (this.config.distillDir !== undefined) {
+      return this.config.distillDir
+    }
+    const cwd = this.ctx.get('workingDirectory')?.get(session)
+    if (cwd === undefined) {
+      fail('PROMPT_OPTIMIZER_NO_DISTILL_TARGET', 'prompt-optimizer: no distill target; configure distillDir, or run inside a session that owns a working directory')
+    }
+    return `${cwd}/.dsh/skills`
+  }
+
+  /**
+   * Distill one completed round into a durable agent skill file, in two phases
+   * over one model round: a preview call (`confirm` absent or false) feeds the
+   * round's draft, optimized result, and interview answers to one model round,
+   * validates the produced SKILL.md, stores it as pending, and returns it in
+   * `pendingDefinition` without writing files; a confirming call (`confirm:
+   * true`) runs no model round, re-validates the pending definition, then
+   * writes a pre-existing definition to `SKILL.md.bak` (which the registry
+   * never lists) before the new definition replaces `SKILL.md`.
+   * @param request - producing session, the round's texts, answers, and the phase selector.
+   * @param signal - caller cancellation.
+   * @returns the distilled skill's name, description, byte size, and target directory — plus the pending definition on previews.
+   * @throws when the session is gone, the texts fail bounds, no target directory resolves, the model round fails, or the produced definition fails validation.
+   */
+  async distillSkill(request: PromptDistillRequest, signal: AbortSignal): Promise<PromptDistillResult> {
+    signal.throwIfAborted()
+    const session = this.ctx.sessions.get(request.sessionId)
+    if (session === undefined) {
+      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
+    }
+    if (request.draft.trim() === '' || request.optimized.trim() === '') {
+      fail('PROMPT_OPTIMIZER_EMPTY_TEXT', 'prompt-optimizer: a distillation needs the round\'s non-empty draft and optimized text')
+    }
+    const clarifications = normalizeClarifications(request.clarifications, this.config.maxInputBytes)
+    const targetDir = this.distillTargetDir(session)
+    const fs = this.ctx.get('fs')
+    if (fs === undefined) {
+      fail('PROMPT_OPTIMIZER_NO_FS', 'prompt-optimizer: no filesystem service is composed; add a dsh-fs implementation to write distilled skills')
+    }
+    let definition: string
+    if (request.confirm === true) {
+      definition = this.pendingDistills.get(request.sessionId) ?? fail('PROMPT_OPTIMIZER_DISTILL_NOT_PENDING', 'prompt-optimizer: confirm requires a preceding preview for this session')
+    } else {
+      const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+      const messages: Message[] = [createUserMessage({
+        content: [{ type: 'text', text: distillationUserInput(request.draft, request.optimized, clarifications) }],
+        source: { kind: 'dsh-prompt-optimizer' },
+      })]
+      try {
+        using callDeadline = deadline(signal, this.config.timeoutMs, 'PROMPT_OPTIMIZER_TIMEOUT')
+        let call: Awaited<ReturnType<typeof this.ctx.llm.prepareCall>>
+        try {
+          call = await this.ctx.llm.prepareCall({ ...route, maxTokens: this.config.maxOutputTokens }, callDeadline.signal)
+        } catch (error) {
+          callDeadline.signal.throwIfAborted()
+          if (error instanceof LlmError && error.code === 'NO_ADAPTER') {
+            fail('PROMPT_OPTIMIZER_NO_ADAPTER', noAdapterMessage(this.ctx, route.provider))
+          }
+          throw error
+        }
+        const llmOptions: GenerateOptions = {
+          ...call.config,
+          messages,
+          system: distillationSystemPrompt(),
+          sessionId: request.sessionId,
+          signal: callDeadline.signal,
+        }
+        callDeadline.signal.throwIfAborted()
+        const assembler = new BlockAssembler()
+        for await (const chunk of call.stream(llmOptions)) {
+          callDeadline.signal.throwIfAborted()
+          assembler.push(chunk)
+        }
+        callDeadline.signal.throwIfAborted()
+        terminalFinish(assembler.finish)
+        definition = responseText(assembler.blocks()).trim()
+      } catch (error) {
+        signal.throwIfAborted()
+        if (isTypedFailure(error)) throw error
+        fail('PROMPT_OPTIMIZER_DISTILL_FAILED', `prompt-optimizer: distilling the round failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    let parsed: ReturnType<typeof parseSkillDefinition>
+    try {
+      parsed = parseSkillDefinition(definition)
+    } catch (error) {
+      fail('PROMPT_OPTIMIZER_DISTILL_INVALID', `prompt-optimizer: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (definition.length > SKILL_MAX_CHARS) {
+      fail('PROMPT_OPTIMIZER_DISTILL_INVALID', `prompt-optimizer: the distilled skill definition exceeds the ${String(SKILL_MAX_CHARS)}-character cap`)
+    }
+    if (request.confirm !== true) {
+      this.pendingDistills.set(request.sessionId, definition)
+      return {
+        name: parsed.name,
+        description: parsed.description,
+        bytes: Buffer.byteLength(definition, 'utf8'),
+        targetDir,
+        pendingDefinition: definition,
+      }
+    }
+    const skillFile = await fs.resolve(`${targetDir}/${parsed.name}/SKILL.md`, { signal })
+    try {
+      const existing = await fs.readText(skillFile, signal).catch(() => undefined)
+      if (existing !== undefined) {
+        await fs.writeText(await fs.resolve(`${targetDir}/${parsed.name}/SKILL.md.bak`, { signal }), existing, undefined, signal)
+      }
+      await fs.writeText(skillFile, definition, undefined, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      if (isTypedFailure(error)) throw error
+      fail('PROMPT_OPTIMIZER_DISTILL_FAILED', `prompt-optimizer: writing the distilled skill failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    this.pendingDistills.delete(request.sessionId)
+    const bytes = Buffer.byteLength(definition, 'utf8')
+    appendPluginRecord(session, 'plugin:prompt-optimizer/distilled', { name: parsed.name, targetDir, bytes })
+    await this.recordMetric('distilled', { provider: '', model: '' }, 'standard', 1)
+    return { name: parsed.name, description: parsed.description, bytes, targetDir }
+  }
+
   /**
    * Aggregate the persisted metric rows into the summary the settings page
    * renders: decision counts, question totals, and the two rates that say
@@ -1745,6 +1980,7 @@ export default class PromptOptimizer extends Service {
       verifyFailed,
       candidatesRounds: rowsOf('candidates-generated'),
       judgedRounds: judgeRows.length,
+      distills: rowsOf('distilled'),
       judgeAverage: judgeRows.length === 0
         ? null
         : judgeRows.reduce((total, row) => total + row.count, 0) / judgeRows.length,

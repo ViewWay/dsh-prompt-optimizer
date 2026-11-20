@@ -187,6 +187,8 @@ export interface PromptOptimizeResult {
   readonly skipped?: boolean
   /** Stable reason the precheck declined; present exactly when `skipped` is true. */
   readonly skipReason?: PromptSkipReason
+  /** True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill. */
+  readonly suggestDistill?: boolean
   /** Usage from the stream's `usage` chunk; absent until one arrives. */
   readonly usage?: TokenUsage
 }
@@ -266,8 +268,38 @@ export interface PromptCandidatesResult {
   readonly skipped?: boolean
   /** Stable reason the precheck declined; present exactly when `skipped` is true. */
   readonly skipReason?: PromptSkipReason
+  /** True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill. */
+  readonly suggestDistill?: boolean
   /** Usage summed over every round the call dispatched; absent until one arrives. */
   readonly usage?: TokenUsage
+}
+
+/** Wire request to distill one completed round into a durable agent skill file. */
+export interface PromptDistillRequest {
+  /** Session that produced the round; owns the evolution log and the distill target fallback. */
+  readonly sessionId: SessionId
+  /** Complete draft text the round optimized. */
+  readonly draft: string
+  /** Complete optimized text the round produced. */
+  readonly optimized: string
+  /** Interview answers the round carried; they condition what the skill must preserve. */
+  readonly clarifications?: readonly PromptClarification[]
+  /** True commits the pending preview for this session and writes the skill file; absent/false returns a preview without writing. */
+  readonly confirm?: boolean
+}
+
+/** Outcome of one skill distillation. */
+export interface PromptDistillResult {
+  /** Kebab-case skill name parsed from the produced definition. */
+  readonly name: string
+  /** One-line routing description parsed from the produced definition. */
+  readonly description: string
+  /** UTF-8 byte size of the previewed or written definition. */
+  readonly bytes: number
+  /** Directory the confirm phase writes `<name>/SKILL.md` into. */
+  readonly targetDir: string
+  /** The previewed SKILL.md awaiting confirmation; present only on preview results. */
+  readonly pendingDefinition?: string
 }
 
 /** Wire request to execute one acceptance criterion's check command in the Session's workspace. */
@@ -345,6 +377,7 @@ export type PromptMetricKind =
   | 'verify-failed'
   | 'candidates-generated'
   | 'judge-score'
+  | 'distilled'
   | 'adopted'
   | 'rejected'
   | 'decline-overridden'
@@ -385,6 +418,8 @@ export interface PromptMetricsSummary {
   readonly candidatesRounds: number
   /** Candidate rounds whose judge produced a recommended score. */
   readonly judgedRounds: number
+  /** Completed rounds distilled into a durable agent skill file. */
+  readonly distills: number
   /** Mean total score (0–30) of the recommended candidate across judged rounds; null before any. */
   readonly judgeAverage: number | null
   /** `adopted / (adopted + rejected)` over the aggregated rows; null before either kind exists. */

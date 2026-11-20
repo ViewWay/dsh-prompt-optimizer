@@ -1276,6 +1276,7 @@ describe('PromptOptimizer local metrics', () => {
     sessionId: SessionId
   }> {
     const table = new Map<string, MetricRow>()
+    const scratch = new Map<string, unknown>()
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())
     await ctx.plugin(SessionStore)
@@ -1283,12 +1284,20 @@ describe('PromptOptimizer local metrics', () => {
     ctx.llm.registerAdapter(['current-route'], new RecordingAdapter(script))
     ctx.provide('storageDomain', {
       open: async () => ({
-        table: () => ({
-          get: (key: string) => table.get(key),
-          put: async (key: string, value: MetricRow) => { table.set(key, value) },
-          delete: async (key: string) => table.delete(key),
-          entries: () => table.entries(),
-        }),
+        // Repeat fingerprints land in a scratch table so metric-kind assertions stay exact.
+        table: (name: string) => name === 'metrics'
+          ? {
+              get: (key: string) => table.get(key),
+              put: async (key: string, value: MetricRow) => { table.set(key, value) },
+              delete: async (key: string) => table.delete(key),
+              entries: () => table.entries(),
+            }
+          : {
+              get: (key: string) => scratch.get(key),
+              put: async (key: string, value: unknown) => { scratch.set(key, value) },
+              delete: async (key: string) => scratch.delete(key),
+              entries: () => scratch.entries() as never,
+            },
       }),
     } as never)
     await ctx.plugin(PromptOptimizer, { ...CONFIG, metrics: true, ...config })
@@ -1461,14 +1470,23 @@ describe('PromptOptimizer.optimizeCandidates', () => {
     let table: Map<string, CandidateMetricRow> | undefined
     if (metrics) {
       table = new Map<string, CandidateMetricRow>()
+      const scratch = new Map<string, unknown>()
       ctx.provide('storageDomain', {
         open: async () => ({
-          table: () => ({
-            get: (key: string) => table.get(key),
-            put: async (key: string, value: MetricRow) => { table.set(key, value) },
-            delete: async (key: string) => table.delete(key),
-            entries: () => table.entries(),
-          }),
+          // Repeat fingerprints land in a scratch table so metric-kind assertions stay exact.
+          table: (name: string) => name === 'metrics'
+            ? {
+                get: (key: string) => table.get(key),
+                put: async (key: string, value: CandidateMetricRow) => { table.set(key, value) },
+                delete: async (key: string) => table.delete(key),
+                entries: () => table.entries(),
+              }
+            : {
+                get: (key: string) => scratch.get(key),
+                put: async (key: string, value: unknown) => { scratch.set(key, value) },
+                delete: async (key: string) => scratch.delete(key),
+                entries: () => scratch.entries() as never,
+              },
         }),
       } as never)
     }
@@ -1611,5 +1629,154 @@ describe('PromptOptimizer.optimizeCandidates', () => {
     expect(rows[1]).toMatchObject({ count: 25 })
     const summary = await ctx.promptOptimizer.listMetrics(new AbortController().signal)
     expect(summary).toMatchObject({ candidatesRounds: 1, judgedRounds: 1, judgeAverage: 25 })
+  })
+})
+
+describe('PromptOptimizer distillation', () => {
+  /** Row shapes mirrored for the two in-memory table stubs. */
+  type Row = { id: string; createdAt: string; kind?: string; provider?: string; model?: string; tier?: string; count?: number; fingerprint?: string }
+
+  async function withDistillStorage(
+    scripts: readonly (readonly StreamChunk[])[],
+    config: Partial<Config> = {},
+    existingSkill?: string,
+  ): Promise<{
+    ctx: Context
+    sessionId: SessionId
+    metrics: Map<string, Row>
+    repeats: Map<string, Row>
+    writes: { path: string; content: string }[]
+  }> {
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(LlmRuntime)
+    ctx.llm.registerAdapter(['current-route'], new ScriptedAdapter(scripts))
+    const metrics = new Map<string, Row>()
+    const repeats = new Map<string, Row>()
+    ctx.provide('storageDomain', {
+      open: async () => ({
+        table: (name: string) => ({
+          get: (key: string) => (name === 'metrics' ? metrics : repeats).get(key),
+          put: async (key: string, value: Row) => { (name === 'metrics' ? metrics : repeats).set(key, value) },
+          delete: async (key: string) => (name === 'metrics' ? metrics : repeats).delete(key),
+          entries: () => (name === 'metrics' ? metrics : repeats).entries(),
+        }),
+      }),
+    } as never)
+    const writes: { path: string; content: string }[] = []
+    ctx.provide('fs', {
+      resolve: async (path: string) => path,
+      writeText: async (target: string, content: string) => { writes.push({ path: String(target), content }); return {} as never },
+      readText: async (target: string) => {
+        if (String(target).endsWith('SKILL.md') && existingSkill !== undefined) return existingSkill
+        throw new Error('ENOENT')
+      },
+    } as never)
+    ctx.provide('workingDirectory', { get: () => '/proj/root' } as never)
+    await ctx.plugin(PromptOptimizer, { ...CONFIG, metrics: true, ...config })
+    const session = ctx.sessions.create(SessionId('distill-session'))
+    session.append('request/header', {
+      header: { config: { provider: 'current-route', model: 'current-model' } },
+      reason: 'initial',
+    })
+    return { ctx, sessionId: session.id, metrics, repeats, writes }
+  }
+
+  const SKILL_FILE = [
+    '---',
+    'name: uart-debugging',
+    'description: Draft UART debugging prompts with pinned bus config and probe steps',
+    '---',
+    '',
+    '# UART 调试提示词',
+    '',
+    'When to use: 用户要调试串口外设时。',
+  ].join('\n')
+
+  it('suggests distillation exactly on the third optimization of the same normalized draft', async () => {
+    const { ctx, sessionId, repeats } = await withDistillStorage([envelope('优化后', [])])
+
+    const first = await ctx.promptOptimizer.optimize({ sessionId, text: '帮我调试  UART   波特率' }, new AbortController().signal)
+    expect(first.suggestDistill).toBeUndefined()
+    const second = await ctx.promptOptimizer.optimize({ sessionId, text: '帮我调试 uart 波特率' }, new AbortController().signal)
+    expect(second.suggestDistill).toBeUndefined()
+    const third = await ctx.promptOptimizer.optimize({ sessionId, text: '帮我调试  uart  波特率' }, new AbortController().signal)
+    expect(third.suggestDistill).toBe(true)
+    const fourth = await ctx.promptOptimizer.optimize({ sessionId, text: '帮我调试 uart 波特率' }, new AbortController().signal)
+    expect(fourth.suggestDistill).toBeUndefined()
+    // One fingerprint row per completion; whitespace and case normalize away.
+    expect(repeats.size).toBe(4)
+    expect(new Set([...repeats.values()].map(row => row.fingerprint)).size).toBe(1)
+  })
+
+  it('never suggests when metrics is off', async () => {
+    const { ctx, sessionId, repeats } = await withDistillStorage([envelope('优化后', [])], { metrics: false })
+    for (let index = 0; index < 3; index += 1) {
+      const result = await ctx.promptOptimizer.optimize({ sessionId, text: '同一份草稿' }, new AbortController().signal)
+      expect(result.suggestDistill).toBeUndefined()
+    }
+    expect(repeats.size).toBe(0)
+  })
+
+  it('previews a distilled skill without writing and confirms into the project skills directory', async () => {
+    const { ctx, sessionId, writes } = await withDistillStorage([rawText(SKILL_FILE)])
+
+    const preview = await ctx.promptOptimizer.distillSkill(
+      { sessionId, draft: '草稿', optimized: '优化后' }, new AbortController().signal,
+    )
+    expect(preview).toMatchObject({
+      name: 'uart-debugging',
+      description: 'Draft UART debugging prompts with pinned bus config and probe steps',
+      targetDir: '/proj/root/.dsh/skills',
+      pendingDefinition: SKILL_FILE,
+    })
+    expect(writes).toEqual([])
+
+    const confirmed = await ctx.promptOptimizer.distillSkill(
+      { sessionId, draft: '草稿', optimized: '优化后', confirm: true }, new AbortController().signal,
+    )
+    expect(confirmed.pendingDefinition).toBeUndefined()
+    expect(writes).toEqual([{ path: '/proj/root/.dsh/skills/uart-debugging/SKILL.md', content: SKILL_FILE }])
+    const events = ctx.sessions.get(sessionId)!.snapshotEvents().flatMap(event => {
+      const record = pluginRecordOf(event)
+      return record?.type === 'plugin:prompt-optimizer/distilled' ? [record.data] : []
+    })
+    expect(events).toEqual([{ name: 'uart-debugging', targetDir: '/proj/root/.dsh/skills', bytes: Buffer.byteLength(SKILL_FILE, 'utf8') }])
+  })
+
+  it('backs up an existing skill before the confirming write', async () => {
+    const { ctx, sessionId, writes } = await withDistillStorage([rawText(SKILL_FILE)], undefined, '旧的技能定义')
+
+    await ctx.promptOptimizer.distillSkill({ sessionId, draft: '草稿', optimized: '优化后' }, new AbortController().signal)
+    await ctx.promptOptimizer.distillSkill(
+      { sessionId, draft: '草稿', optimized: '优化后', confirm: true }, new AbortController().signal,
+    )
+
+    expect(writes.map(write => write.path)).toEqual([
+      '/proj/root/.dsh/skills/uart-debugging/SKILL.md.bak',
+      '/proj/root/.dsh/skills/uart-debugging/SKILL.md',
+    ])
+    expect(writes[0]!.content).toBe('旧的技能定义')
+  })
+
+  it('fails typed on a malformed skill definition and on a confirm without preview', async () => {
+    const { ctx, sessionId } = await withDistillStorage([rawText('# 没有元数据')])
+    await expect(ctx.promptOptimizer.distillSkill({ sessionId, draft: '草稿', optimized: '优化后' }, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_DISTILL_INVALID' })
+
+    const fresh = await withDistillStorage([rawText(SKILL_FILE)])
+    await expect(fresh.ctx.promptOptimizer.distillSkill(
+      { sessionId: fresh.sessionId, draft: '草稿', optimized: '优化后', confirm: true }, new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_DISTILL_NOT_PENDING' })
+  })
+
+  it('prefers a configured distillDir over the project default', async () => {
+    const { ctx, sessionId, writes } = await withDistillStorage(
+      [rawText(SKILL_FILE)], { distillDir: '/custom/skills' },
+    )
+    await ctx.promptOptimizer.distillSkill({ sessionId, draft: '草稿', optimized: '优化后' }, new AbortController().signal)
+    await ctx.promptOptimizer.distillSkill({ sessionId, draft: '草稿', optimized: '优化后', confirm: true }, new AbortController().signal)
+    expect(writes[0]!.path).toBe('/custom/skills/uart-debugging/SKILL.md')
   })
 })
