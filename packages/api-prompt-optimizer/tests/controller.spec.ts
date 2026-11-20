@@ -296,3 +296,30 @@ it('wraps a distillation failure as the typed Remote error', async () => {
     { sessionId: 'session-1' as never, draft: 'd', optimized: 'o' }, new AbortController().signal,
   )).rejects.toMatchObject({ code: 'prompt-optimizer/distill-failed', details: { reason: 'no target' } })
 })
+
+const CONTEXT_RESULT = {
+  skills: { count: 4, modelInvocable: 4, scannedBodies: 2, totalBodyChars: 512 },
+  findings: [{ kind: 'stale-skill-reference', subject: 'ref-skill', detail: 'references "gone.md", which does not exist' }],
+}
+
+it('forwards a context checkup request to the capability service unchanged', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const contextCheck = vi.fn(async () => CONTEXT_RESULT)
+  ctx.provide('promptOptimizer', { contextCheck } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = { sessionId: 'session-1' as never }
+
+  await expect(api.contextCheck(request, new AbortController().signal)).resolves.toEqual(CONTEXT_RESULT)
+  expect(contextCheck).toHaveBeenCalledExactlyOnceWith(request, expect.any(AbortSignal))
+})
+
+it('wraps a context checkup failure as the typed Remote error', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  ctx.provide('promptOptimizer', { contextCheck: vi.fn(async () => { throw new Error('skills unreadable') }) } as never)
+  const api = new PromptOptimizerController(ctx)
+
+  await expect(api.contextCheck({ sessionId: 'session-1' as never }, new AbortController().signal))
+    .rejects.toMatchObject({ code: 'prompt-optimizer/context-failed', details: { reason: 'skills unreadable' } })
+})

@@ -101,6 +101,29 @@ export class PromptLibraryPreview implements SessionPendingInteractionBase {
 }
 
 /**
+ * Carrier published to the Session pending-interaction registry while the
+ * context checkup panel is open; elects the checkup panel into the composer
+ * seat through its own registration.
+ */
+export class PromptContextPreview implements SessionPendingInteractionBase {
+  readonly kind = 'prompt-context'
+
+  /**
+   * Derive the checkup seat's carrier key for one Session.
+   * @param sessionId - Session whose checkup seat the key addresses.
+   * @returns the fixed carrier key of one Session's checkup seat.
+   */
+  static keyOf(sessionId: SessionId): string {
+    return `prompt-context:${sessionId}`
+  }
+  readonly key: string
+
+  constructor(readonly sessionId: SessionId) {
+    this.key = PromptContextPreview.keyOf(sessionId)
+  }
+}
+
+/**
  * Create the optimization store owned by one mount.
  * @returns the store; mutation belongs to the mount's actions only.
  */

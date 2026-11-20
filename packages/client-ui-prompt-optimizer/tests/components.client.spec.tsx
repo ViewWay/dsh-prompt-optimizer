@@ -9,10 +9,11 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { InputActions, InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { OptimizeButton, type OptimizeButtonProps } from '../src/client/OptimizeButton.tsx'
 import { QueueItemOptimizeEntry, type QueueItemOptimizeEntryProps } from '../src/client/QueueItemOptimizeEntry.tsx'
+import { ContextPanel } from '../src/client/ContextPanel.tsx'
 import { PreviewPanel, type PreviewPanelProps } from '../src/client/PreviewPanel.tsx'
 import { LibraryPanel, type LibraryPanelInjected, type LibraryPanelProps } from '../src/client/LibraryPanel.tsx'
 import { PromptOptimizerSettings, type PromptOptimizerSettingsProps } from '../src/client/PromptOptimizerSettings.tsx'
-import { createOptimizationStore, PromptLibraryPreview, PromptOptimizationPreview, type OptimizationSnapshot, type OptimizationState } from '../src/client/optimization.ts'
+import { createOptimizationStore, PromptContextPreview, PromptLibraryPreview, PromptOptimizationPreview, type OptimizationSnapshot, type OptimizationState } from '../src/client/optimization.ts'
 import { zh } from '../src/client/locales.ts'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type { PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
@@ -77,6 +78,7 @@ function buttonProps(overrides: Partial<OptimizeButtonProps> & { draft?: string;
     loadRoles: vi.fn(async () => []),
     recommendRoles: vi.fn(async () => []),
     openLibrary: vi.fn(),
+    openContext: vi.fn(),
     useOptimization: <T,>(selector: (snapshot: OptimizationSnapshot) => T): T => selector(store.getSnapshot()),
     t,
     ...Object.fromEntries(Object.entries(overrides).filter(([key]) => !['draft', 'state'].includes(key))),
@@ -825,6 +827,72 @@ function libraryProps(overrides: Partial<LibraryPanelInjected> = {}): LibraryPan
 }
 
 
+
+
+describe('OptimizeButton context entry', () => {
+  it('opens the checkup panel on click', () => {
+    const openContext = vi.fn()
+    const { props } = buttonProps({ draft: '草稿', openContext })
+    render(<OptimizeButton {...props} />)
+    screen.getByTestId('open-context').click()
+    expect(openContext).toHaveBeenCalledExactlyOnceWith(SESSION)
+  })
+})
+
+describe('ContextPanel', () => {
+  const REPORT = {
+    systemPrompt: {
+      totalChars: 3000,
+      estimatedTokens: 750,
+      sections: [{ name: 'identity', chars: 1000, share: 1 / 3 }, { name: 'persona', chars: 2000, share: 2 / 3 }],
+    },
+    skills: { count: 5, modelInvocable: 4, scannedBodies: 2, totalBodyChars: 800 },
+    findings: [{ kind: 'stale-skill-reference', subject: 'ref-skill', detail: 'references "gone.md", which does not exist' }],
+  }
+
+  function contextProps(overrides: Record<string, unknown> = {}) {
+    return {
+      sessionId: SESSION,
+      matched: new PromptContextPreview(SESSION),
+      contextCheck: vi.fn(async () => REPORT),
+      closeContext: vi.fn(),
+      t,
+      ...overrides,
+    } as never
+  }
+
+  it('renders the sizing report and localized findings', async () => {
+    render(<ContextPanel {...contextProps()} />)
+    const system = await waitFor(() => screen.getByTestId('context-system'))
+    expect(system.textContent).toContain(zh.contextSystemTitle)
+    expect(system.textContent).toContain('identity：1000 字符（33%）')
+    expect(screen.getByTestId('context-skills').textContent).toContain('技能 5 个')
+    const findings = screen.getByTestId('context-findings')
+    expect(findings.textContent).toContain(zh.findingStaleReference)
+    expect(findings.textContent).toContain('ref-skill')
+    expect(findings.textContent).toContain('gone.md')
+  })
+
+  it('shows the clean state and closes through the injected verb', async () => {
+    const closeContext = vi.fn()
+    render(<ContextPanel {...contextProps({
+      contextCheck: vi.fn(async () => ({ ...REPORT, findings: [] })),
+      closeContext,
+    })} />)
+    await waitFor(() => { expect(screen.getByTestId('context-clean').textContent).toBe(zh.contextNoFindings) })
+    screen.getByRole('button', { name: zh.cancel }).click()
+    expect(closeContext).toHaveBeenCalledExactlyOnceWith(SESSION)
+  })
+
+  it('surfaces a failed scan with a retry', async () => {
+    const failing = vi.fn(async () => { throw new Error('skills unreadable') })
+    render(<ContextPanel {...contextProps({ contextCheck: failing })} />)
+    const error = await waitFor(() => screen.getByTestId('context-error'))
+    expect(error.textContent).toContain(zh.contextError.replace('{message}', 'skills unreadable'))
+    screen.getByRole('button', { name: zh.contextRerun }).click()
+    await waitFor(() => { expect(failing).toHaveBeenCalledTimes(2) })
+  })
+})
 
 describe('PreviewPanel distillation', () => {
   const DISTILL = { name: 'uart-debugging', description: 'Draft UART debugging prompts', bytes: 210, targetDir: '/proj/.dsh/skills' }

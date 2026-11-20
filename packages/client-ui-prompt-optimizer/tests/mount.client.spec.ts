@@ -571,3 +571,28 @@ it('distills a suggested round through the preview-then-confirm flow', async () 
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }
 })
+
+it('opens the checkup panel, runs the deterministic scan, and closes cleanly', async () => {
+  const CONTEXT_REPORT = {
+    skills: { count: 3, modelInvocable: 3, scannedBodies: 1, totalBodyChars: 400 },
+    findings: [{ kind: 'oversized-skill', subject: 'big-skill', detail: 'body is 6001 characters' }],
+  }
+  const contextCheck = vi.fn(async () => ({ ok: true as const, value: CONTEXT_REPORT }))
+  const b = await fixture(undefined, undefined, true, { contextCheck })
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx) as typeof actionsOf extends () => infer T ? T : never
+    ;(actions as { openContext: (sessionId: SessionId) => void }).openContext(SESSION)
+    expect(b.published).toHaveLength(1)
+    expect(b.published[0]!.interaction).toMatchObject({ key: `prompt-context:${SESSION}`, kind: 'prompt-context' })
+    const report = await (actions as unknown as { contextCheck: (sessionId: SessionId) => Promise<typeof CONTEXT_REPORT> }).contextCheck(SESSION)
+    expect(contextCheck).toHaveBeenCalledExactlyOnceWith({ sessionId: SESSION }, expect.any(AbortSignal))
+    expect(report.findings).toHaveLength(1)
+    ;(actions as { openContext: (sessionId: SessionId) => void }).openContext(SESSION)
+    expect(b.published).toHaveLength(1)
+    await b.published[0]!.delegate()
+    expect(b.published).toHaveLength(0)
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})

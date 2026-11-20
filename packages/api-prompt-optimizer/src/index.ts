@@ -5,6 +5,8 @@ import type {} from '@yimiliya/dsh-prompt-optimizer'
 import type {
   PromptCandidatesRequest,
   PromptCandidatesResult,
+  PromptContextCheckRequest,
+  PromptContextCheckResult,
   PromptDistillRequest,
   PromptDistillResult,
   PromptInterviewRequest,
@@ -168,6 +170,25 @@ export default class PromptOptimizerController extends TypertRemoteService {
         throw new RemoteError('prompt-optimizer/verify-blocked', reason, { reason }, { cause: error })
       }
       throw new RemoteError('prompt-optimizer/verify-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Scan the Session's standing context (system prompt plus installed skills)
+   * through the capability service; deterministic, no model round.
+   * @param request - session whose context is scanned.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   * @returns sizing for both inputs plus findings; empty findings mean clean.
+   */
+  @Remote
+  async contextCheck(request: PromptContextCheckRequest, signal: AbortSignal): Promise<PromptContextCheckResult> {
+    signal.throwIfAborted()
+    try {
+      return await this.ctx.promptOptimizer.contextCheck(request, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/context-failed', reason, { reason }, { cause: error })
     }
   }
 

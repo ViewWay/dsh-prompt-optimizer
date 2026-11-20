@@ -13,6 +13,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   PromptCandidatesResult,
   PromptClarification,
+  PromptContextCheckResult,
   PromptDistillResult,
   PromptLibraryEntry,
   PromptMetricsSummary,
@@ -32,7 +33,8 @@ import { PreviewPanel } from './PreviewPanel.tsx'
 import { QueueItemOptimizeEntry } from './QueueItemOptimizeEntry.tsx'
 import { PromptOptimizerSettings } from './PromptOptimizerSettings.tsx'
 import { PromptOptimizerSettingsForm } from './settings-form.ts'
-import { createOptimizationStore, PromptLibraryPreview, PromptOptimizationPreview } from './optimization.ts'
+import { ContextPanel } from './ContextPanel.tsx'
+import { createOptimizationStore, PromptContextPreview, PromptLibraryPreview, PromptOptimizationPreview } from './optimization.ts'
 import type { QueueItemId } from './optimization.ts'
 import { en, NS, zh } from './locales.ts'
 
@@ -124,10 +126,14 @@ function registerUi(ctx: Context): void {
   const previews = new Map<SessionId, () => void>()
   const libraryPreviews = new Map<SessionId, () => void>()
   const libraryInserts = new Map<SessionId, (text: string) => void>()
+  const contextPreviews = new Map<SessionId, () => void>()
   const registerPendingInteraction = ctx.uiSession.registerPendingInteraction<PromptOptimizationPreview>(
     () => 0,
   )
   const registerLibraryInteraction = ctx.uiSession.registerPendingInteraction<PromptLibraryPreview>(
+    () => 0,
+  )
+  const registerContextInteraction = ctx.uiSession.registerPendingInteraction<PromptContextPreview>(
     () => 0,
   )
   ctx.effect(() => () => {
@@ -137,6 +143,8 @@ function registerUi(ctx: Context): void {
     for (const unpublish of libraryPreviews.values()) unpublish()
     libraryPreviews.clear()
     libraryInserts.clear()
+    for (const unpublish of contextPreviews.values()) unpublish()
+    contextPreviews.clear()
   })
 
   const dismiss = (sessionId: SessionId): void => {
@@ -359,6 +367,19 @@ function registerUi(ctx: Context): void {
     previews.set(sessionId, registerPendingInteraction(preview, () => { dismiss(sessionId); return Promise.resolve() }))
   }
 
+  /** Close one Session's checkup panel. */
+  const closeContext = (sessionId: SessionId): void => {
+    contextPreviews.get(sessionId)?.()
+    contextPreviews.delete(sessionId)
+  }
+
+  /** Open the context-checkup panel for one Session in the composer seat. */
+  const openContext = (sessionId: SessionId): void => {
+    closeContext(sessionId)
+    const preview = new PromptContextPreview(sessionId)
+    contextPreviews.set(sessionId, registerContextInteraction(preview, () => { closeContext(sessionId); return Promise.resolve() }))
+  }
+
   /** Open the library panel for one Session, registering how a picked entry replaces the draft. */
   const openLibrary = (sessionId: SessionId, insert: (text: string) => void): void => {
     closeLibrary(sessionId)
@@ -545,6 +566,14 @@ function registerUi(ctx: Context): void {
     openLibrary: (sessionId: SessionId, insert: (text: string) => void): void => {
       openLibrary(sessionId, insert)
     },
+    openContext: (sessionId: SessionId): void => {
+      openContext(sessionId)
+    },
+    contextCheck: async (sessionId: SessionId): Promise<PromptContextCheckResult> => {
+      const result = await ctx.remote.promptOptimizer.contextCheck({ sessionId }, new AbortController().signal)
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
+    },
     loadRoles: async (): Promise<readonly PromptRoleSummary[]> => {
       const result = await ctx.remote.promptOptimizer.listRoles(new AbortController().signal)
       if (!result.ok) throw new Error(result.error.message)
@@ -617,6 +646,12 @@ function registerUi(ctx: Context): void {
     closeLibrary: (sessionId: SessionId): void => { closeLibrary(sessionId) },
   }
 
+  /** Inject face the checkup panel registration serves. */
+  const contextActions = {
+    contextCheck: actions.contextCheck,
+    closeContext: (sessionId: SessionId): void => { closeContext(sessionId) },
+  }
+
   const injected = { ...actions, hooks: { optimization: store } }
 
   ctx.slots.inject('conversation.input.right', () => ctx.slots.register(
@@ -662,6 +697,16 @@ function registerUi(ctx: Context): void {
       inject: () => libraryActions,
     },
     LibraryPanel,
+  ))
+  ctx.slots.inject('conversation.composer', () => ctx.slots.register(
+    {
+      name: 'conversation.composer',
+      select: ({ pendingInteraction }: ComposerChainProps): PromptContextPreview | null =>
+        pendingInteraction instanceof PromptContextPreview ? pendingInteraction : null,
+      locale: NS,
+      inject: () => contextActions,
+    },
+    ContextPanel,
   ))
   const settingsForm = new PromptOptimizerSettingsForm(
     ctx.configForms.get<PromptOptimizerSettingsSection>('prompt-optimizer'),

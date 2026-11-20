@@ -45,9 +45,11 @@
 
 已落地形态（分支 `feat/p2b-judge` 同支）：`prompt_optimizer_repeats` 存储域按归一化草稿哈希计数（不存内容，随 `metrics` 开关），第三次命中时结果携带 `suggestDistill`；`distillSkill` RPC 两阶段（预览轮 + 确认写盘，镜像 evolveRole），写入会话项目 `.dsh/skills/<name>/SKILL.md`（`distillDir` 可覆盖，同名先备份 `.bak`），文件系统 provider 即时收录；面板建议块 + 定义预览 + 确认/放弃；`distilled` 指标行与设置页计数。全量 check 288/288。
 
-### P4：上下文体检（context doctor）
+### P4：上下文体检（context doctor）✅ 已落地
 
 扫描 system prompt + skills + 记忆组合：冗余、冲突、过期引用（提示词提到的工具已不存在）、token 预算占比（对抗 context rot）。dsh 插件位置独有——网关拿不到这些输入，独立工具拿不到路由。
+
+已落地形态（分支 `feat/p2b-judge` 同支）：`contextCheck` RPC 确定性扫描（零 LLM）——系统提示经 `systemPrompt.assemble`（以会话 Agent 为 scope，降级到全局层）逐段计体量/占比/粗估 token（CJK 单字计）；技能经注册表按工作目录列出并深读前 16 个正文，做 Jaccard 重复检测、超长检测、相对文件引用存在性核对（按技能 resourceBase 目录）；五类发现（超长/重复段落、超长/重复技能、失效引用）。纯分析逻辑在 `src/context-check.ts`。输入行「体检」按钮 → composer 位 `ContextPanel` 报告卡。记忆子系统本 harness 未提供，未纳入。全量 check 304/304。
 
 ## 不做
 

@@ -302,6 +302,48 @@ export interface PromptDistillResult {
   readonly pendingDefinition?: string
 }
 
+/** One context-doctor finding: a localized kind plus the offending subject. */
+export interface PromptContextFinding {
+  /** What the finding is about. */
+  readonly kind: 'oversized-section' | 'duplicate-section' | 'oversized-skill' | 'duplicate-skill' | 'stale-skill-reference'
+  /** Section name, skill name, or `left ≈ right` pair the finding is about. */
+  readonly subject: string
+  /** Short English detail line; the client renders the kind localized beside it. */
+  readonly detail: string
+}
+
+/** Wire request to scan the Session's standing context: system prompt plus installed skills. */
+export interface PromptContextCheckRequest {
+  /** Session whose scoped system prompt and working directory scope the scan. */
+  readonly sessionId: SessionId
+}
+
+/** Outcome of one context scan. */
+export interface PromptContextCheckResult {
+  /** System-prompt sizing; undefined when no system-prompt service is composed. */
+  readonly systemPrompt?: {
+    /** Summed section characters. */
+    readonly totalChars: number
+    /** Rough token estimate of the assembled sections. */
+    readonly estimatedTokens: number
+    /** Per-section sizing in canonical order. */
+    readonly sections: readonly { readonly name: string; readonly chars: number; readonly share: number }[]
+  }
+  /** Skill catalog sizing. */
+  readonly skills: {
+    /** Skills the registry listed for the session's working directory. */
+    readonly count: number
+    /** Those the model may invoke. */
+    readonly modelInvocable: number
+    /** Bodies deep-read for findings. */
+    readonly scannedBodies: number
+    /** Summed characters of the scanned bodies. */
+    readonly totalBodyChars: number
+  }
+  /** Findings in scan order; empty when the context is clean. */
+  readonly findings: readonly PromptContextFinding[]
+}
+
 /** Wire request to execute one acceptance criterion's check command in the Session's workspace. */
 export interface PromptVerifyRequest {
   /** Session whose workspace the command runs in; owns the verify log. */

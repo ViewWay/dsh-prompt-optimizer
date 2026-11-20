@@ -39,6 +39,8 @@ import type {
   PromptCandidate,
   PromptCandidatesRequest,
   PromptCandidatesResult,
+  PromptContextCheckRequest,
+  PromptContextCheckResult,
   PromptDistillRequest,
   PromptDistillResult,
   PromptClarification,
@@ -88,6 +90,7 @@ import {
 import type { PromptRoleRef, RoundConditioning } from './meta-prompt.ts'
 import { recommendRoles as rankRoles } from './recommend.ts'
 import { classifyModelTier, declineToOptimize } from './model-tier.ts'
+import { analyzeSections, analyzeSkills, estimateTokens } from './context-check.ts'
 import { enrichSkillHint, MAX_DETAIL_HINTS, selectSkillHints } from './skills.ts'
 import type { SkillHint } from './skills.ts'
 import { screenVerifyCommand } from './verify-policy.ts'
@@ -269,6 +272,8 @@ const REPEAT_DISTILL_THRESHOLD = 3
 const REPEATS_MAX_ROWS = 500
 /** Longest distilled SKILL.md accepted from one round. */
 const SKILL_MAX_CHARS = 8000
+/** Most skill bodies one context scan deep-reads. */
+const MAX_SCANNED_SKILLS = 16
 /** Metric kinds a client may report; host-written kinds are never accepted from the wire. */
 const CLIENT_METRIC_KINDS: readonly PromptMetricKind[] = ['adopted', 'rejected', 'decline-overridden']
 /** Most metric rows kept on disk; the oldest beyond the cap are pruned on write. */
@@ -1834,6 +1839,89 @@ export default class PromptOptimizer extends Service {
       fail('PROMPT_OPTIMIZER_NO_DISTILL_TARGET', 'prompt-optimizer: no distill target; configure distillDir, or run inside a session that owns a working directory')
     }
     return `${cwd}/.dsh/skills`
+  }
+
+  /**
+   * Scan the Session's standing context — the scoped system prompt's assembled
+   * sections plus the installed skills visible to the session's working
+   * directory — and surface oversized blocks, near-duplicate content, and
+   * stale file references. Deterministic: no model round runs.
+   * @param request - session whose context is scanned.
+   * @param signal - caller cancellation.
+   * @returns sizing for both inputs plus findings; empty findings mean clean.
+   * @throws when the session is gone or a listing fails.
+   */
+  async contextCheck(request: PromptContextCheckRequest, signal: AbortSignal): Promise<PromptContextCheckResult> {
+    signal.throwIfAborted()
+    const session = this.ctx.sessions.get(request.sessionId)
+    if (session === undefined) {
+      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
+    }
+    const cwd = this.ctx.get('workingDirectory')?.get(session)
+    const systemPrompt = this.ctx.get('systemPrompt')
+    // The agent is the scope key its sections registered under; without one the scan degrades to the global layer.
+    const agent = this.ctx.get('agents')?.get(request.sessionId)
+    let systemPromptStat: PromptContextCheckResult['systemPrompt']
+    let sectionFindings: ReturnType<typeof analyzeSections>['findings'] = []
+    if (systemPrompt !== undefined) {
+      const assembly = await systemPrompt.assemble({ ...(agent !== undefined ? { scope: agent } : {}), signal })
+      const sections = assembly.sections.map(section => ({ name: section.name, text: section.text }))
+      const analysis = analyzeSections(sections)
+      systemPromptStat = {
+        totalChars: sections.reduce((sum, section) => sum + section.text.length, 0),
+        estimatedTokens: estimateTokens(sections.map(section => section.text).join('\n')),
+        sections: analysis.stats,
+      }
+      sectionFindings = analysis.findings
+    }
+    const registry = this.ctx.get('skills')
+    let skills: PromptContextCheckResult['skills'] = { count: 0, modelInvocable: 0, scannedBodies: 0, totalBodyChars: 0 }
+    let skillFindings: Awaited<ReturnType<typeof analyzeSkills>> = []
+    if (registry !== undefined) {
+      const summaries = await registry.list({ ...(cwd !== undefined ? { cwd } : {}), signal })
+      const invocable = summaries.filter(summary => summary.invocation.modelInvocable)
+      const scanned: { name: string; body: string; base: string | undefined }[] = []
+      for (const summary of invocable.slice(0, MAX_SCANNED_SKILLS)) {
+        try {
+          const definition = await registry.get(summary.name, { ...(cwd !== undefined ? { cwd } : {}), signal })
+          if (definition !== undefined) {
+            scanned.push({
+              name: summary.name,
+              body: definition.content,
+              base: definition.resourceBase?.kind === 'directory' ? definition.resourceBase.path : undefined,
+            })
+          }
+        } catch {
+          signal.throwIfAborted()
+        }
+      }
+      const fs = this.ctx.get('fs')
+      skillFindings = await analyzeSkills(
+        scanned.map(entry => ({ name: entry.name, body: entry.body })),
+        async (skill, reference) => {
+          const base = scanned.find(entry => entry.name === skill)?.base
+          if (base === undefined || fs === undefined) return true
+          try {
+            const target = await fs.resolve(`${base}/${reference}`, { signal })
+            return (await fs.stat(target, signal)) !== undefined
+          } catch {
+            signal.throwIfAborted()
+            return false
+          }
+        },
+      )
+      skills = {
+        count: summaries.length,
+        modelInvocable: invocable.length,
+        scannedBodies: scanned.length,
+        totalBodyChars: scanned.reduce((sum, entry) => sum + entry.body.length, 0),
+      }
+    }
+    return {
+      ...(systemPromptStat !== undefined ? { systemPrompt: systemPromptStat } : {}),
+      skills,
+      findings: [...sectionFindings, ...skillFindings],
+    }
   }
 
   /**

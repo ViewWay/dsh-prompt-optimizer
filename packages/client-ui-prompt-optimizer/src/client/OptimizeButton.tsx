@@ -1,7 +1,7 @@
 /** Compact composer trigger: starts one optimization round for the draft. */
 import { useEffect, useMemo, useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { Button, IconArchiveOutlineRegular, IconQuestionOutlineRegular, IconThinkOutlineRegular, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconQuestionOutlineRegular, IconThinkOutlineRegular, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   PromptRoleRecommendation,
@@ -72,6 +72,8 @@ export interface OptimizeButtonActions {
   recommendRoles: (sessionId: SessionId, text: string) => Promise<readonly PromptRoleRecommendation[]>
   /** Open the prompt-library panel; `insert` replaces the composer draft when a stored entry is picked. */
   openLibrary: (sessionId: SessionId, insert: (text: string) => void) => void
+  /** Open the deterministic context-checkup panel for the Session. */
+  openContext: (sessionId: SessionId) => void
 }
 
 /** Inject face shared by the mount: round verbs plus the state hook source. */
@@ -86,7 +88,7 @@ export type OptimizeButtonProps =
 
 /** Render the toolbar trigger; the preview panel owns everything after the click. */
 export function OptimizeButton(
-  { sessionId, useInput, inputActions, start, startQueued, startInterview, startInterviewQueued, loadRoles, recommendRoles, openLibrary, useOptimization, t }: OptimizeButtonProps,
+  { sessionId, useInput, inputActions, start, startQueued, startInterview, startInterviewQueued, loadRoles, recommendRoles, openLibrary, openContext, useOptimization, t }: OptimizeButtonProps,
 ) {
   const draft = useInput(input => input.draft)
   const rawQueue = useInput(input => input.queue)
@@ -158,6 +160,14 @@ export function OptimizeButton(
             ))}
           </span>
         )}
+        <Tooltip label={t('contextOpen')} side="top" portal>
+          <Button
+            className={css.trigger} size="sm" aria-label={t('contextOpen')} data-testid="open-context"
+            onClick={() => { openContext(sessionId) }}
+          >
+            <IconCheckOutlineRegular size={18} />
+          </Button>
+        </Tooltip>
         <Tooltip label={t('libraryOpen')} side="top" portal>
           <Button
             className={css.trigger} size="sm" aria-label={t('libraryOpen')} data-testid="open-library"

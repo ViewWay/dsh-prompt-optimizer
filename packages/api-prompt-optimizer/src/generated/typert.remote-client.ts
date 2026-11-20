@@ -7,6 +7,8 @@ import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   PromptCandidatesRequest,
   PromptCandidatesResult,
+  PromptContextCheckRequest,
+  PromptContextCheckResult,
   PromptDistillRequest,
   PromptDistillResult,
   PromptInterviewRequest,
@@ -29,6 +31,7 @@ import type {
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace$70726f6d70744f7074696d697a6572 {
+    contextCheck: (request: PromptContextCheckRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptContextCheckResult>>
     deletePrompt: (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     distillSkill: (request: PromptDistillRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptDistillResult>>
     evolveRole: (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
@@ -44,6 +47,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     verify: (request: PromptVerifyRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptVerifyResult>>
   }
   interface TypertRemoteMap {
+    'promptOptimizer/contextCheck': (request: PromptContextCheckRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptContextCheckResult>>
     'promptOptimizer/deletePrompt': (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     'promptOptimizer/distillSkill': (request: PromptDistillRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptDistillResult>>
     'promptOptimizer/evolveRole': (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
@@ -76,6 +80,33 @@ const _v1 = () => (_v1$value ??= z.array(z.object({
   'id': z.string().readonly().describe('Role slug matching a `<slug>.md` definition file in the configured roles directory.'),
   'name': z.string().readonly().describe('Human-facing role name parsed from the definition\'s first heading; the slug when no heading exists.'),
 })))
+let _contextCheck_parameter_0$value
+const _contextCheck_parameter_0 = () => (_contextCheck_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session whose scoped system prompt and working directory scope the scan.'),
+}))
+let _contextCheck_result$value
+const _contextCheck_result = () => (_contextCheck_result$value ??= z.object({
+  'systemPrompt': z.object({
+    'totalChars': z.number().readonly().describe('Summed section characters.'),
+    'estimatedTokens': z.number().readonly().describe('Rough token estimate of the assembled sections.'),
+    'sections': z.array(z.object({
+      'name': z.string().readonly().describe('Contributing section name, unique within the assembly.'),
+      'chars': z.number().readonly().describe('Section text length in characters.'),
+      'share': z.number().readonly().describe('Share of the assembled sections\' total characters, 0-1.'),
+    })).readonly().describe('Per-section sizing in canonical order.'),
+  }).readonly().optional().describe('System-prompt sizing; undefined when no system-prompt service is composed.'),
+  'skills': z.object({
+    'count': z.number().readonly().describe('Skills the registry listed for the session\'s working directory.'),
+    'modelInvocable': z.number().readonly().describe('Those the model may invoke.'),
+    'scannedBodies': z.number().readonly().describe('Bodies deep-read for findings.'),
+    'totalBodyChars': z.number().readonly().describe('Summed characters of the scanned bodies.'),
+  }).readonly().describe('Skill catalog sizing.'),
+  'findings': z.array(z.object({
+    'kind': z.union([z.literal('oversized-section'), z.literal('duplicate-section'), z.literal('oversized-skill'), z.literal('duplicate-skill'), z.literal('stale-skill-reference')]).readonly().describe('What the finding is about.'),
+    'subject': z.string().readonly().describe('Section name, skill name, or `left ~= right` pair the finding is about.'),
+    'detail': z.string().readonly().describe('Short English detail line; the client renders the kind localized beside it.'),
+  })).readonly().describe('Findings in scan order; empty when the context is clean.'),
+}))
 let _deletePrompt_parameter_0$value
 const _deletePrompt_parameter_0 = () => (_deletePrompt_parameter_0$value ??= z.object({
   'sessionId': z.string().readonly().describe('Session requesting the deletion.'),
@@ -307,6 +338,10 @@ const _verify_result = () => (_verify_result$value ??= z.object({
   'output': z.string().readonly().describe('Combined stdout and stderr, truncated to the service\'s output cap.'),
   'durationMs': z.number().readonly().describe('Wall time from dispatch to completion.'),
 }))
+let _contextCheck_parameter_0_strict$value
+const _contextCheck_parameter_0_strict = () => (_contextCheck_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+}))
 let _deletePrompt_parameter_0_strict$value
 const _deletePrompt_parameter_0_strict = () => (_deletePrompt_parameter_0_strict$value ??= z.strictObject({
   'sessionId': z.string().readonly(),
@@ -389,6 +424,39 @@ const _verify_parameter_0_strict = () => (_verify_parameter_0_strict$value ??= z
 export const TYPERT_REMOTE = createTypertRemoteInfo({
   package: '@yimiliya/dsh-api-prompt-optimizer',
   methods: {
+    'promptOptimizer/contextCheck': {
+      service: 'promptOptimizerController',
+      description: 'Scan the Session\'s standing context (system prompt plus installed skills) through the capability service; deterministic, no model round.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'session whose context is scanned.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptContextCheckRequest',
+            create: _contextCheck_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptContextCheckRequest',
+            create: _contextCheck_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' } }, required: ['sessionId'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptContextCheckResult',
+        create: _contextCheck_result,
+        description: 'sizing for both inputs plus findings; empty findings mean clean.',
+        jsonSchema: { type: 'object', properties: { systemPrompt: { type: 'object', properties: { totalChars: { type: 'number' }, estimatedTokens: { type: 'number' }, sections: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, chars: { type: 'number' }, share: { type: 'number' } }, required: ['name', 'chars', 'share'], additionalProperties: true } } }, required: ['totalChars', 'estimatedTokens', 'sections'], additionalProperties: true }, skills: { type: 'object', properties: { count: { type: 'number' }, modelInvocable: { type: 'number' }, scannedBodies: { type: 'number' }, totalBodyChars: { type: 'number' } }, required: ['count', 'modelInvocable', 'scannedBodies', 'totalBodyChars'], additionalProperties: true }, findings: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string', enum: ['oversized-section', 'duplicate-section', 'oversized-skill', 'duplicate-skill', 'stale-skill-reference'] }, subject: { type: 'string' }, detail: { type: 'string' } }, required: ['kind', 'subject', 'detail'], additionalProperties: true } } }, required: ['skills', 'findings'], additionalProperties: true },
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 176, column: 9 },
+    },
     'promptOptimizer/deletePrompt': {
       service: 'promptOptimizerController',
       description: 'Delete one stored entry from the durable prompt library.',

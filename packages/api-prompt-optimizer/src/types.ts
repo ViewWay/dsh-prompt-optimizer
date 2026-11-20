@@ -15,6 +15,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'prompt-optimizer/candidates-failed': { readonly reason: string }
     /** One skill-distillation round or write failed; `reason` names the typed service failure. */
     'prompt-optimizer/distill-failed': { readonly reason: string }
+    /** One context scan failed; `reason` names the typed service failure. */
+    'prompt-optimizer/context-failed': { readonly reason: string }
     /** One intent-clarification interview round failed; `reason` names the typed service failure. */
     'prompt-optimizer/interview-failed': { readonly reason: string }
     /** One local-metrics operation failed; `reason` names the typed service failure. */
@@ -35,6 +37,9 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 export type {
   ModelTier,
   PromptCandidate,
+  PromptContextCheckRequest,
+  PromptContextCheckResult,
+  PromptContextFinding,
   PromptDistillRequest,
   PromptDistillResult,
   PromptCandidateScores,

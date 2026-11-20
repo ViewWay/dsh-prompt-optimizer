@@ -1780,3 +1780,104 @@ describe('PromptOptimizer distillation', () => {
     expect(writes[0]!.path).toBe('/custom/skills/uart-debugging/SKILL.md')
   })
 })
+
+describe('PromptOptimizer.contextCheck', () => {
+  async function withContext(opt: {
+    sections?: readonly { name: string; text: string }[]
+    skills?: readonly { name: string; body: string; base?: string; files?: readonly string[] }[]
+  }): Promise<{ ctx: Context; sessionId: SessionId }> {
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(LlmRuntime)
+    if (opt.sections !== undefined) {
+      ctx.provide('systemPrompt', { assemble: async () => ({ sections: opt.sections!.map(section => ({ ...section })), contexts: [], variables: {}, tools: [] }) } as never)
+    }
+    if (opt.skills !== undefined) {
+      ctx.provide('skills', {
+        list: async () => opt.skills!.map(skill => ({
+          name: skill.name,
+          description: `${skill.name} description`,
+          invocation: { modelInvocable: true, userInvocable: true },
+          source: 'project-dsh',
+          provider: 'fs',
+          ...(skill.base !== undefined ? { resourceBase: { kind: 'directory', path: skill.base } } : {}),
+        })),
+        get: async (name: string) => {
+          const skill = opt.skills!.find(entry => entry.name === name)
+          if (skill === undefined) return undefined
+          return {
+            name: skill.name,
+            description: `${skill.name} description`,
+            invocation: { modelInvocable: true, userInvocable: true },
+            source: 'project-dsh',
+            provider: 'fs',
+            content: skill.body,
+            ...(skill.base !== undefined ? { resourceBase: { kind: 'directory', path: skill.base } } : {}),
+          }
+        },
+      } as never)
+      ctx.provide('fs', {
+        resolve: async (path: string) => path,
+        stat: async (target: string) => {
+          const base = opt.skills!.find(skill => skill.base !== undefined && String(target).startsWith(skill.base))
+          if (base === undefined) throw new Error('ENOENT')
+          const reference = String(target).slice(`${base.base}/`.length)
+          return base.files?.includes(reference) === true ? { type: 'file' } : Promise.reject(new Error('ENOENT'))
+        },
+      } as never)
+    }
+    await ctx.plugin(PromptOptimizer, CONFIG)
+    const session = ctx.sessions.create(SessionId('context-session'))
+    session.append('request/header', {
+      header: { config: { provider: 'current-route', model: 'current-model' } },
+      reason: 'initial',
+    })
+    return { ctx, sessionId: session.id }
+  }
+
+  it('sizes the assembled system prompt and flags oversized plus duplicate sections', async () => {
+    const repeated = 'check the register map before touching any peripheral on this board '.repeat(4)
+    const { ctx, sessionId } = await withContext({
+      sections: [
+        { name: 'identity', text: 'identity text' },
+        { name: 'huge', text: 'z'.repeat(4001) },
+        { name: 'left', text: repeated },
+        { name: 'right', text: `${repeated}with a tail` },
+      ],
+    })
+
+    const report = await ctx.promptOptimizer.contextCheck({ sessionId }, new AbortController().signal)
+
+    expect(report.systemPrompt!.totalChars).toBe(report.systemPrompt!.sections.reduce((sum, section) => sum + section.chars, 0))
+    expect(report.systemPrompt!.sections[0]).toEqual({ name: 'identity', chars: 'identity text'.length, share: expect.any(Number) })
+    expect(report.findings.map(finding => finding.kind)).toEqual(['oversized-section', 'duplicate-section'])
+    expect(report.skills).toEqual({ count: 0, modelInvocable: 0, scannedBodies: 0, totalBodyChars: 0 })
+  })
+
+  it('scans skill bodies for duplicates and stale references through the registry', async () => {
+    const shared = 'wire the sensor over i2c then dump the register table before changing driver code '.repeat(3)
+    const { ctx, sessionId } = await withContext({
+      skills: [
+        { name: 'i2c-a', body: shared, base: '/skills/i2c-a', files: [] },
+        { name: 'i2c-b', body: shared, base: '/skills/i2c-b', files: [] },
+        { name: 'ref-skill', body: 'Open ./present.md and ./gone.md', base: '/skills/ref', files: ['present.md'] },
+      ],
+    })
+
+    const report = await ctx.promptOptimizer.contextCheck({ sessionId }, new AbortController().signal)
+
+    expect(report.systemPrompt).toBeUndefined()
+    expect(report.skills).toMatchObject({ count: 3, modelInvocable: 3, scannedBodies: 3 })
+    expect(report.findings).toEqual([
+      expect.objectContaining({ kind: 'duplicate-skill', subject: 'i2c-a ≈ i2c-b' }),
+      expect.objectContaining({ kind: 'stale-skill-reference', subject: 'ref-skill', detail: expect.stringContaining('gone.md') }),
+    ])
+  })
+
+  it('fails typed when no live session backs the request', async () => {
+    const { ctx } = await withContext({})
+    await expect(ctx.promptOptimizer.contextCheck({ sessionId: SessionId('gone') }, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_SESSION_UNAVAILABLE' })
+  })
+})
