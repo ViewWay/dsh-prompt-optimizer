@@ -9,7 +9,7 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import type { SessionPendingInteractionBase } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { InputState } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { PromptClarification, PromptInterviewQuestion, PromptOptimizeDirection, PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
+import type { PromptCandidate, PromptClarification, PromptInterviewQuestion, PromptOptimizeDirection, PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
 
 /** Identity of one pending queue item the round may rewrite in place. */
 export type QueueItemId = InputState['queue'][number]['id']
@@ -36,6 +36,10 @@ export interface OptimizationState {
   readonly answers?: Readonly<Record<number, string>> | undefined
   /** Interview answers carried into rounds and preserved across reruns; absent for a plain round. */
   readonly clarifications?: readonly PromptClarification[] | undefined
+  /** Scored alternatives from a candidates round; present only in `ready` after such a round. */
+  readonly candidates?: readonly PromptCandidate[] | undefined
+  /** Index into `candidates` the current `result` mirrors; present exactly with `candidates`. */
+  readonly selectedCandidate?: number | undefined
   /** Result of the completed round; present only in `ready`. */
   readonly result: PromptOptimizeResult | undefined
   /** Failure message of the round; present only in `failed`. */

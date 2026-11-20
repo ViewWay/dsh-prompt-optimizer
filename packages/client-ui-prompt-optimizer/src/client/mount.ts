@@ -11,10 +11,12 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { ComposerChainProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
+  PromptCandidatesResult,
   PromptClarification,
   PromptLibraryEntry,
   PromptMetricsSummary,
   PromptOptimizeDirection,
+  PromptOptimizeResult,
   PromptOptimizeTarget,
   PromptOptimizerSettings as PromptOptimizerSettingsSection,
   PromptRoleEvolveResult,
@@ -69,6 +71,49 @@ function activeLanguageLabel(locale: Context['locale']): string | undefined {
   // A single selectable language is unambiguous; the host default already matches it.
   if (snapshot.locales.length < 2) return undefined
   return snapshot.locales.find(candidate => candidate.id === snapshot.active)?.label
+}
+
+/**
+ * Mirror one candidates round into the preview's normal result slot: the
+ * recommended candidate becomes `result`, so apply, rerun, library, and
+ * role-evolution flows work unchanged while the candidate list sits beside it.
+ * @param round - completed candidates round.
+ * @param draft - draft text the round ran over, verbatim for a declined result.
+ * @returns the preview result plus the selected candidate index.
+ */
+function resultOfCandidatesRound(round: PromptCandidatesResult, draft: string): {
+  readonly result: PromptOptimizeResult
+  readonly selected: number
+} {
+  if (round.skipped === true || round.candidates.length === 0) {
+    return {
+      result: {
+        optimizedText: draft,
+        changes: [],
+        acceptance: [],
+        provider: round.provider,
+        model: round.model,
+        ...(round.tier !== undefined ? { tier: round.tier } : {}),
+        ...(round.skipped === true ? { skipped: true } : {}),
+        ...(round.skipReason !== undefined ? { skipReason: round.skipReason } : {}),
+      },
+      selected: 0,
+    }
+  }
+  const index = Math.max(0, Math.min(round.recommended, round.candidates.length - 1))
+  const candidate = round.candidates[index]!
+  return {
+    result: {
+      optimizedText: candidate.optimizedText,
+      changes: candidate.changes,
+      acceptance: candidate.acceptance,
+      provider: round.provider,
+      model: round.model,
+      ...(round.tier !== undefined ? { tier: round.tier } : {}),
+      ...(round.skills !== undefined && round.skills.length > 0 ? { skills: round.skills } : {}),
+    },
+    selected: index,
+  }
 }
 
 function registerUi(ctx: Context): void {
@@ -167,6 +212,72 @@ function registerUi(ctx: Context): void {
             ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             result: result.value, error: undefined, apply: state.apply,
+          }
+        })
+      } catch (failure) {
+        if (controller.signal.aborted && rounds.get(sessionId)?.controller === controller) return
+        const message = failure instanceof Error ? failure.message : String(failure)
+        store.update((draft) => {
+          draft[sessionId] = {
+            phase: 'failed', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
+            direction: state.direction,
+            ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+            ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
+            result: undefined, error: message, apply: state.apply,
+          }
+        })
+      } finally {
+        if (rounds.get(sessionId)?.controller === controller) rounds.delete(sessionId)
+      }
+    })()
+  }
+
+  /**
+   * Run one N-candidate round over the same request state a plain round uses:
+   * the recommended candidate becomes the preview result and the scored list
+   * sits beside it for comparison.
+   */
+  const runCandidates = (sessionId: SessionId, state: RoundRequest): void => {
+    const round = rounds.get(sessionId)
+    if (round !== undefined) round.controller.abort(new Error('superseded by a new round'))
+    const controller = new AbortController()
+    rounds.set(sessionId, { controller })
+    store.update((draft) => {
+      draft[sessionId] = {
+        phase: 'running', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
+        direction: state.direction,
+        ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+        ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
+        result: undefined, error: undefined, apply: state.apply,
+      }
+    })
+    void (async () => {
+      try {
+        const language = activeLanguageLabel(ctx.locale)
+        const outcome = await ctx.remote.promptOptimizer.optimizeCandidates(
+          {
+            sessionId,
+            text: state.draft,
+            ...(state.role !== undefined ? { role: state.role } : {}),
+            ...(language !== undefined ? { language } : {}),
+            ...(state.direction !== undefined ? { direction: state.direction } : {}),
+            ...(state.force ? { force: true } : {}),
+            ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+          },
+          controller.signal,
+        )
+        if (!outcome.ok) throw new Error(outcome.error.message)
+        controller.signal.throwIfAborted()
+        const { result, selected } = resultOfCandidatesRound(outcome.value, state.draft)
+        store.update((draft) => {
+          draft[sessionId] = {
+            phase: 'ready', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
+            direction: state.direction,
+            ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+            ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
+            candidates: outcome.value.candidates,
+            selectedCandidate: selected,
+            result, error: undefined, apply: state.apply,
           }
         })
       } catch (failure) {
@@ -346,6 +457,40 @@ function registerUi(ctx: Context): void {
     },
     regenerateWithDirection: (sessionId: SessionId, direction: PromptOptimizeDirection): void => {
       rerun(sessionId, 'draft', store.getSnapshot()[sessionId]?.role, direction)
+    },
+    regenerateCandidates: (sessionId: SessionId): void => {
+      const state = store.getSnapshot()[sessionId]
+      if (state === undefined || (state.queueItemId === undefined && state.apply === undefined)) return
+      // An explicit candidates round asks for alternatives: the discarded result counts as rejected.
+      if (state.result !== undefined && state.result.skipped !== true) {
+        reportOutcome(sessionId, 'rejected', state.result)
+      }
+      runCandidates(sessionId, {
+        draft: state.draft, previousAttempts: state.previousAttempts, apply: state.apply ?? (() => {}), target: 'draft',
+        role: state.role, direction: state.direction, force: true, clarifications: state.clarifications, queueItemId: state.queueItemId,
+      })
+    },
+    selectCandidate: (sessionId: SessionId, index: number): void => {
+      const state = store.getSnapshot()[sessionId]
+      if (state?.phase !== 'ready' || state.result === undefined || state.candidates === undefined) return
+      const candidate = state.candidates[index]
+      if (candidate === undefined || index === state.selectedCandidate) return
+      const prior = state.result
+      store.update((draft) => {
+        draft[sessionId] = {
+          ...state,
+          selectedCandidate: index,
+          result: {
+            optimizedText: candidate.optimizedText,
+            changes: candidate.changes,
+            acceptance: candidate.acceptance,
+            provider: prior.provider,
+            model: prior.model,
+            ...(prior.tier !== undefined ? { tier: prior.tier } : {}),
+            ...(prior.skills !== undefined && prior.skills.length > 0 ? { skills: prior.skills } : {}),
+          },
+        }
+      })
     },
     startInterview: (sessionId: SessionId, text: string, apply: (text: string) => void, role?: string): void => {
       openPreview(sessionId)

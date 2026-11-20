@@ -191,6 +191,85 @@ export interface PromptOptimizeResult {
   readonly usage?: TokenUsage
 }
 
+/** Per-dimension judge scores for one candidate rewrite; each an integer 0–10. */
+export interface PromptCandidateScores {
+  /** How faithfully the candidate preserves the draft's stated facts and intent, adding nothing. */
+  readonly faithfulness: number
+  /** How completely it pins the constraints, inputs, and success criteria the draft implies. */
+  readonly completeness: number
+  /** How clear and immediately executable it is for the receiving agent. */
+  readonly clarity: number
+}
+
+/** One generated candidate rewrite from a candidates round, with its judge outcome. */
+export interface PromptCandidate {
+  /** Stable candidate label: `A`, `B`, `C`, `D`. */
+  readonly label: string
+  /** Rewritten prompt text; never empty for a completed candidate. */
+  readonly optimizedText: string
+  /** Short per-change accounts in the draft's language; empty when the model listed none. */
+  readonly changes: readonly string[]
+  /** Draft acceptance criteria; empty when the model listed none. */
+  readonly acceptance: readonly PromptAcceptanceCriterion[]
+  /** Judge scores; absent when the judge round scored no candidate. */
+  readonly scores?: PromptCandidateScores
+  /** Sum of the three judge scores; present exactly when `scores` is. */
+  readonly total?: number
+  /** True when no scored sibling dominates this candidate on every dimension. */
+  readonly pareto: boolean
+  /** True for the single candidate the round recommends. */
+  readonly recommended: boolean
+}
+
+/** Wire request for one N-candidate round: N differentiated rewrites plus an LLM-judge scoring pass. */
+export interface PromptCandidatesRequest {
+  /** Session whose draft is being optimized; owns the request log and route fallback. */
+  readonly sessionId: SessionId
+  /** Complete current draft text, exactly as the composer holds it. */
+  readonly text: string
+  /** How many candidates to generate; default 3, allowed 2–4. */
+  readonly count?: number
+  /** Role slug whose definition styles every candidate; absent for a generic rewrite. */
+  readonly role?: string
+  /**
+   * Self-describing name of the language every candidate must be written in (for
+   * example `中文`); absent keeps the draft's language.
+   */
+  readonly language?: string
+  /** Direction every candidate pushes toward; absent applies the plain rules. */
+  readonly direction?: PromptOptimizeDirection
+  /** True bypasses the decline-to-optimize precheck and forces the rounds. */
+  readonly force?: boolean
+  /** Interview answers folded into every candidate as first-class requirements. */
+  readonly clarifications?: readonly PromptClarification[]
+}
+
+/** Outcome of one N-candidate round. */
+export interface PromptCandidatesResult {
+  /** Generated candidates in generation order; empty exactly when `skipped` is true. */
+  readonly candidates: readonly PromptCandidate[]
+  /** Index into `candidates` of the recommended pick. */
+  readonly recommended: number
+  /** True when the judge round failed or produced no readable scores; candidates then carry none. */
+  readonly judgeFailed?: boolean
+  /** Failure message of a degraded judge round; present exactly when `judgeFailed` is true. */
+  readonly judgeError?: string
+  /** Exact provider route that produced the candidates. */
+  readonly provider: string
+  /** Exact model id that produced the candidates. */
+  readonly model: string
+  /** Names of the installed-skill hints that conditioned the rounds; absent when none matched. */
+  readonly skills?: readonly string[]
+  /** Capability tier of the route that produced the candidates. */
+  readonly tier?: ModelTier
+  /** True when the precheck declined the rounds; `candidates` is then empty. */
+  readonly skipped?: boolean
+  /** Stable reason the precheck declined; present exactly when `skipped` is true. */
+  readonly skipReason?: PromptSkipReason
+  /** Usage summed over every round the call dispatched; absent until one arrives. */
+  readonly usage?: TokenUsage
+}
+
 /** Wire request to execute one acceptance criterion's check command in the Session's workspace. */
 export interface PromptVerifyRequest {
   /** Session whose workspace the command runs in; owns the verify log. */
@@ -264,6 +343,8 @@ export type PromptMetricKind =
   | 'clarified'
   | 'verify-passed'
   | 'verify-failed'
+  | 'candidates-generated'
+  | 'judge-score'
   | 'adopted'
   | 'rejected'
   | 'decline-overridden'
@@ -300,6 +381,12 @@ export interface PromptMetricsSummary {
   readonly verifyPassed: number
   /** Acceptance-check commands that exited nonzero, timed out, or died. */
   readonly verifyFailed: number
+  /** Candidate rounds run: each generated N candidates plus one judge pass. */
+  readonly candidatesRounds: number
+  /** Candidate rounds whose judge produced a recommended score. */
+  readonly judgedRounds: number
+  /** Mean total score (0–30) of the recommended candidate across judged rounds; null before any. */
+  readonly judgeAverage: number | null
   /** `adopted / (adopted + rejected)` over the aggregated rows; null before either kind exists. */
   readonly adoptionRate: number | null
   /** `verifyPassed / (verifyPassed + verifyFailed)`; null before either kind exists. */

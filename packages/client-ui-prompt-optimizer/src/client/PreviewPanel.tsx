@@ -52,6 +52,16 @@ export interface PreviewPanelActions {
    * @param direction - direction the next rewrite must push toward.
    */
   regenerateWithDirection: (sessionId: PromptOptimizationPreview['sessionId'], direction: PromptOptimizeDirection) => void
+  /** Re-run the preview's draft as one N-candidate round with a judge scoring pass; the recommended
+   * candidate becomes the result and the scored list sits beside it for comparison.
+   * @param sessionId - Session whose preview is open.
+   */
+  regenerateCandidates: (sessionId: PromptOptimizationPreview['sessionId']) => void
+  /** Switch the preview to one candidate of the open candidates round.
+   * @param sessionId - Session whose preview is open.
+   * @param index - index into the preview's candidate list.
+   */
+  selectCandidate: (sessionId: PromptOptimizationPreview['sessionId'], index: number) => void
   /** Interview the user about the preview's draft again: fresh questions replace the current result.
    * @param sessionId - Session whose preview is open.
    */
@@ -175,7 +185,7 @@ const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, er
 
 /** Render one Session's optimization preview in the composer seat. */
 export function PreviewPanel(props: PreviewPanelProps) {
-  const { matched, apply, regenerate, regenerateAsSystem, regenerateForced, regenerateAsRole, regenerateWithDirection, cancel, loadRoles } = props
+  const { matched, apply, regenerate, regenerateAsSystem, regenerateForced, regenerateAsRole, regenerateWithDirection, regenerateCandidates, selectCandidate, cancel, loadRoles } = props
   const { verifyCheck, saveToLibrary, evolveRole, reInterview, answerInterview, submitInterview, skipInterview, useOptimization, t } = props
   const state = useOptimization(snapshot => snapshot[matched.sessionId])
   const [rolesRevision, setRolesRevision] = useState(0)
@@ -388,6 +398,38 @@ export function PreviewPanel(props: PreviewPanelProps) {
             })}
           </div>
           : null}
+        {ready && state.candidates !== undefined && state.candidates.length > 0
+          ? <div className={css.directionRow} data-testid="optimization-candidates">
+            <span className={css.directionLabel}>{t('candidatesLabel')}</span>
+            {state.candidates.map((candidate, index) => {
+              const selected = index === state.selectedCandidate
+              const detail = candidate.scores === undefined
+                ? undefined
+                : `${t('candidateScores', {
+                  label: candidate.label,
+                  faithfulness: candidate.scores.faithfulness,
+                  completeness: candidate.scores.completeness,
+                  clarity: candidate.scores.clarity,
+                })}${candidate.pareto ? ` · ${t('candidatePareto')}` : ''}`
+              return (
+                <button
+                  key={candidate.label} type="button"
+                  className={selected ? css.directionChipActive : css.directionChip}
+                  aria-pressed={selected}
+                  title={detail}
+                  data-testid={`candidate-${candidate.label}`}
+                  onClick={() => { selectCandidate(matched.sessionId, index) }}
+                >
+                  {`${candidate.label}${candidate.total !== undefined ? ` · ${String(candidate.total)}` : ''}${candidate.pareto ? ' ★' : ''}`}
+                </button>
+              )
+            })}
+          </div>
+          : null}
+        {ready && state.candidates !== undefined && state.candidates.length > 0
+          && state.candidates.every(candidate => candidate.scores === undefined)
+          ? <p className={css.noChanges} data-testid="candidates-unjudged">{t('judgeUnavailable')}</p>
+          : null}
         {skipped && state.result.skipReason !== undefined
           ? <div className={css.critique} data-testid="optimization-skip">
             <p className={css.noChanges}>{t(SKIP_ADVICE_KEYS[state.result.skipReason] ?? 'skipAdviceReasoningShort')}</p>
@@ -554,6 +596,11 @@ export function PreviewPanel(props: PreviewPanelProps) {
           {ready
             ? <Button size="sm" type="button" onClick={() => { reInterview(matched.sessionId) }} data-testid="reinterview">
               {t('reinterview')}
+            </Button>
+            : null}
+          {ready && !skipped
+            ? <Button size="sm" type="button" onClick={() => { regenerateCandidates(matched.sessionId) }} data-testid="optimize-candidates">
+              {t('candidatesTrigger')}
             </Button>
             : null}
           {ready

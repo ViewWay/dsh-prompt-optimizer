@@ -8,7 +8,7 @@
  * @module @yimiliya/dsh-prompt-optimizer
  */
 
-import type { ModelTier, PromptClarification, PromptInterviewQuestion, PromptOptimizeDirection } from './types.ts'
+import type { ModelTier, PromptCandidateScores, PromptClarification, PromptInterviewQuestion, PromptOptimizeDirection } from './types.ts'
 import type { SkillHint, SkillParameter } from './skills.ts'
 import { modelTierBlock } from './model-tier.ts'
 
@@ -20,6 +20,8 @@ export const CHANGES_MARKER = '<<<CHANGES>>>'
 export const AC_MARKER = '<<<AC>>>'
 /** Starts the clarifying-questions section of an interview response. */
 export const QUESTIONS_MARKER = '<<<QUESTIONS>>>'
+/** Starts the scoring block of a judge response. */
+export const JUDGE_MARKER = '<<<JUDGE>>>'
 
 /** Upper bound on change bullets kept from one response. */
 const MAX_CHANGES = 6
@@ -484,6 +486,161 @@ export function parseInterviewResponse(response: string): readonly PromptIntervi
   }
   flush()
   return questions.slice(0, MAX_QUESTIONS)
+}
+
+/**
+ * Frame one draft as a candidates round's user input: after the first
+ * candidate, every later candidate sees its already-generated siblings and is
+ * told to make different trade-offs, so N candidates spread across the
+ * rewrite space instead of clustering on one phrasing.
+ * @param text - complete draft text to optimize.
+ * @param clarifications - interview answers folded in as authoritative requirements.
+ * @param siblings - earlier candidates of the same round, generation order.
+ * @returns exact user input for one candidate round.
+ */
+export function candidateUserInput(
+  text: string,
+  clarifications: readonly PromptClarification[],
+  siblings: readonly { readonly label: string; readonly text: string }[],
+): string {
+  const earlier = siblings.map(sibling => `--- sibling candidate ${sibling.label} ---\n${sibling.text}`).join('\n\n')
+  const answers = clarifications.map(pair => `Q: ${pair.question}\nA: ${pair.answer}`).join('\n\n')
+  return [
+    siblings.length === 0
+      ? ''
+      : `This round already produced the sibling candidates below. Produce a meaningfully different alternative — different structure and different trade-offs (for example more explicit structure and invariants, or tighter concision) — never a near-copy of any sibling:\n\n${earlier}\n`,
+    clarifications.length === 0
+      ? ''
+      : `The user answered these clarifying questions; each answer is an authoritative requirement of the rewrite:\n\n${answers}\n`,
+    'Optimize the following draft prompt:',
+    '',
+    text,
+  ].filter(part => part !== '').join('\n')
+}
+
+/**
+ * The judge system prompt: score every labeled candidate rewrite of one draft
+ * on three independent 0–10 dimensions and name the single best pick, so the
+ * user compares scored alternatives instead of trusting one rewrite.
+ * @returns exact system prompt text for one judge round.
+ */
+export function judgeSystemPrompt(): string {
+  return [
+    'You are a prompt-judging specialist. You receive one draft prompt and several labeled candidate rewrites of it. Score every candidate and name the best one.',
+    '',
+    'Rules:',
+    "1. Score each candidate on three dimensions, each an integer 0–10: faithfulness (preserves the draft's stated facts and intent, adds nothing), completeness (pins the constraints, inputs, and success criteria the draft implies), clarity (clear and immediately executable for the receiving agent).",
+    '2. Score the dimensions independently and use the range; give identical scores only when the candidates are genuinely equal on that dimension.',
+    '3. Judge only against the draft and the user\'s answers; never reward invented facts, and never penalize a candidate for omitting something the draft never stated.',
+    '4. Write each rationale as one short line in the draft\'s language.',
+    '5. End with exactly one BEST line naming the candidate you would hand the user — the highest total, ties broken by clarity.',
+    '',
+    'Respond with exactly this format and nothing else:',
+    JUDGE_MARKER,
+    'A: faithfulness=8 completeness=7 clarity=9 — (one short rationale)',
+    'B: faithfulness=7 completeness=9 clarity=8 — (one short rationale)',
+    'BEST: A',
+  ].join('\n')
+}
+
+/**
+ * Frame the draft, the user's answers, and every labeled candidate as the
+ * judge round's user input.
+ * @param text - complete original draft text.
+ * @param clarifications - interview answers that conditioned the candidates.
+ * @param candidates - labeled candidate rewrites, generation order.
+ * @returns exact user input for the judge round.
+ */
+export function judgeUserInput(
+  text: string,
+  clarifications: readonly PromptClarification[],
+  candidates: readonly { readonly label: string; readonly text: string }[],
+): string {
+  const answers = clarifications.map(pair => `Q: ${pair.question}\nA: ${pair.answer}`).join('\n\n')
+  const labeled = candidates.map(candidate => `--- candidate ${candidate.label} ---\n${candidate.text}`).join('\n\n')
+  return [
+    'Judge these candidate rewrites of one draft prompt.',
+    '',
+    '--- original draft ---',
+    text,
+    '',
+    ...(clarifications.length === 0
+      ? []
+      : ['--- the user\'s authoritative answers ---', answers, '']),
+    labeled,
+    '',
+    'Output only the scoring block in the required format.',
+  ].join('\n')
+}
+
+/** One parsed judge line: a labeled candidate's scores, clamped to 0–10 integers. */
+interface ParsedJudgeScore {
+  readonly label: string
+  readonly scores: PromptCandidateScores
+}
+
+/**
+ * Parse one judge response into per-label scores and the BEST pick. Lines for
+ * labels outside `labels` are ignored; out-of-range or fractional scores are
+ * clamped to integers 0–10; a BEST naming an unscored or unknown label is
+ * dropped. Everything outside {@link JUDGE_MARKER} is ignored.
+ * @param response - complete assembled judge response.
+ * @param labels - candidate labels the round generated, generation order.
+ * @returns the parsed scores plus the valid BEST label when one appeared.
+ */
+export function parseJudgeResponse(response: string, labels: readonly string[]): {
+  readonly scores: readonly ParsedJudgeScore[]
+  readonly best: string | undefined
+} {
+  const markerStart = response.indexOf(JUDGE_MARKER)
+  const body = markerStart === -1 ? response : response.slice(markerStart + JUDGE_MARKER.length)
+  const known = new Set(labels)
+  const clamp = (value: number): number => Math.max(0, Math.min(10, Math.trunc(value)))
+  const scores: ParsedJudgeScore[] = []
+  let best: string | undefined
+  const seen = new Set<string>()
+  for (const rawLine of body.split('\n')) {
+    const line = rawLine.trim()
+    const scoreMatch = /^([A-Za-z]):\s*faithfulness=(-?\d+(?:\.\d+)?)\s+completeness=(-?\d+(?:\.\d+)?)\s+clarity=(-?\d+(?:\.\d+)?)/.exec(line)
+    if (scoreMatch !== null) {
+      const label = scoreMatch[1]!
+      if (!known.has(label) || seen.has(label)) continue
+      seen.add(label)
+      scores.push({
+        label,
+        scores: {
+          faithfulness: clamp(Number(scoreMatch[2])),
+          completeness: clamp(Number(scoreMatch[3])),
+          clarity: clamp(Number(scoreMatch[4])),
+        },
+      })
+      continue
+    }
+    const bestMatch = /^BEST:\s*([A-Za-z])\s*$/.exec(line)
+    if (bestMatch !== null) best = bestMatch[1]
+  }
+  return { scores, best: best !== undefined && known.has(best) && seen.has(best) ? best : undefined }
+}
+
+/**
+ * Mark which scored candidates sit on the Pareto frontier: a candidate is
+ * dominated when some scored sibling matches or beats it on every dimension
+ * and strictly beats it on at least one. Unscored entries are never on the
+ * frontier.
+ * @param scores - per-candidate scores aligned with the candidate list; undefined for unscored.
+ * @returns one flag per entry, true exactly on the frontier.
+ */
+export function paretoFlags(scores: readonly (PromptCandidateScores | undefined)[]): readonly boolean[] {
+  const dims: (keyof PromptCandidateScores)[] = ['faithfulness', 'completeness', 'clarity']
+  return scores.map((self, index) => {
+    if (self === undefined) return false
+    return !scores.some((other, otherIndex) => {
+      if (otherIndex === index || other === undefined) return false
+      const ge = dims.every(dim => other[dim] >= self[dim])
+      const gt = dims.some(dim => other[dim] > self[dim])
+      return ge && gt
+    })
+  })
 }
 
 /**

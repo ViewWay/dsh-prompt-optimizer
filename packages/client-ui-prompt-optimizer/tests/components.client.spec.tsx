@@ -22,6 +22,7 @@ const SESSION = 'session-1' as SessionId
 const EMPTY_METRICS = {
   adopted: 0, rejected: 0, declined: 0, declineOverridden: 0,
   interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
+  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null,
   adoptionRate: null, verifyPassRate: null, rows: 0,
 }
 const t: OptimizeButtonProps['t'] = (key, params) => {
@@ -255,6 +256,8 @@ function panelProps(state: OptimizationState | undefined, actions: Partial<Previ
     regenerateAsSystem: vi.fn(),
     regenerateAsRole: vi.fn(),
     regenerateWithDirection: vi.fn(),
+    regenerateCandidates: vi.fn(),
+    selectCandidate: vi.fn(),
     regenerateForced: vi.fn(),
     reInterview: vi.fn(),
     answerInterview: vi.fn(),
@@ -280,6 +283,7 @@ describe('PromptOptimizerSettings', () => {
     const summary = {
       adopted: 3, rejected: 1, declined: 2, declineOverridden: 1,
       interviewQuestions: 5, clarifiedRounds: 2, verifyPassed: 4, verifyFailed: 1,
+      candidatesRounds: 2, judgedRounds: 2, judgeAverage: 24.5,
       adoptionRate: 0.75, verifyPassRate: 0.8, rows: 17,
     }
     const base = settingsProps()
@@ -290,6 +294,7 @@ describe('PromptOptimizerSettings', () => {
     expect(card.textContent).toContain(zh.settingsMetricsVerify.replace('{value}', '80%'))
     expect(card.textContent).toContain('劝退轮次：2（被推翻 1）')
     expect(card.textContent).toContain('澄清问题 5 个，带澄清改写 2 轮')
+    expect(card.textContent).toContain('多候选 2 轮，推荐候选平均分 24.5')
   })
 
   function settingsProps(section: { defaultRole?: string } = {}, roles: readonly { id: string; name: string }[] = ROLES): {
@@ -817,6 +822,67 @@ function libraryProps(overrides: Partial<LibraryPanelInjected> = {}): LibraryPan
     ...overrides,
   }
 }
+
+
+describe('PreviewPanel candidates', () => {
+  const CANDIDATES = [
+    { label: 'A', optimizedText: '候选甲', changes: [], acceptance: [], scores: { faithfulness: 8, completeness: 8, clarity: 9 }, total: 25, pareto: true, recommended: false },
+    { label: 'B', optimizedText: '候选乙', changes: [], acceptance: [], scores: { faithfulness: 9, completeness: 7, clarity: 9 }, total: 25, pareto: true, recommended: true },
+  ]
+
+  it('renders the candidate chips with totals, stars, and per-dimension titles', () => {
+    render(<PreviewPanel {...panelProps({
+      ...READY,
+      candidates: CANDIDATES,
+      selectedCandidate: 1,
+      result: { ...RESULT, optimizedText: '候选乙' },
+    })} />)
+    const strip = screen.getByTestId('optimization-candidates')
+    expect(strip.textContent).toContain(zh.candidatesLabel)
+    const chipA = screen.getByTestId('candidate-A')
+    expect(chipA.textContent).toContain('A · 25 ★')
+    expect(chipA.getAttribute('title')).toContain('忠实 8')
+    expect(screen.getByTestId('candidate-B').getAttribute('aria-pressed')).toBe('true')
+    // The recommended candidate mirrors into the result column.
+    expect(screen.getByTestId('optimization-result').textContent).toBe('候选乙')
+  })
+
+  it('switches the preview result when a candidate is picked', () => {
+    const selectCandidate = vi.fn()
+    render(<PreviewPanel {...panelProps(
+      { ...READY, candidates: CANDIDATES, selectedCandidate: 1 },
+      { selectCandidate },
+    )} />)
+    screen.getByTestId('candidate-A').click()
+    expect(selectCandidate).toHaveBeenCalledExactlyOnceWith(SESSION, 0)
+  })
+
+  it('triggers a candidates round from the ready footer', () => {
+    const regenerateCandidates = vi.fn()
+    render(<PreviewPanel {...panelProps(READY, { regenerateCandidates })} />)
+    screen.getByRole('button', { name: zh.candidatesTrigger }).click()
+    expect(regenerateCandidates).toHaveBeenCalledExactlyOnceWith(SESSION)
+  })
+
+  it('notes when the judge round left the candidates unscored', () => {
+    render(<PreviewPanel {...panelProps({
+      ...READY,
+      candidates: [
+        { label: 'A', optimizedText: '候选甲', changes: [], acceptance: [], pareto: false, recommended: true },
+        { label: 'B', optimizedText: '候选乙', changes: [], acceptance: [], pareto: false, recommended: false },
+      ],
+      selectedCandidate: 0,
+    })} />)
+    expect(screen.getByTestId('candidates-unjudged').textContent).toBe(zh.judgeUnavailable)
+  })
+
+  it('keeps the candidates trigger hidden while a round is running', () => {
+    render(<PreviewPanel {...panelProps({
+      phase: 'running', draft: 'd', previousAttempts: [], role: undefined, result: undefined, error: undefined, apply: () => {},
+    })} />)
+    expect(screen.queryByRole('button', { name: zh.candidatesTrigger })).toBeNull()
+  })
+})
 
 describe('LibraryPanel', () => {
   it('lists stored entries, expands one, and shows its stable date label', async () => {

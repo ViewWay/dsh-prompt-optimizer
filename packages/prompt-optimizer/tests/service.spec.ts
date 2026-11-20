@@ -1400,3 +1400,216 @@ describe('PromptOptimizer local metrics', () => {
       .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_METRICS' })
   })
 })
+
+/** Adapter serving one queued script per dispatch; the last script repeats when the queue empties. */
+/** Metric row shape mirrored for the in-memory table stub. */
+type CandidateMetricRow = { id: string; createdAt: string; kind: string; provider: string; model: string; tier: string; count: number }
+
+/** Adapter serving one queued script per dispatch; the last script repeats when the queue empties. */
+class ScriptedAdapter extends LlmAdapter {
+  private calls = 0
+  readonly requests: GenerateOptions[] = []
+
+  constructor(private readonly scripts: readonly (readonly StreamChunk[])[]) {
+    super()
+  }
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({ provider, id: model, name: model })
+  }
+
+  override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    this.requests.push(options)
+    const script = this.scripts[Math.min(this.calls, this.scripts.length - 1)]!
+    this.calls += 1
+    yield * script
+  }
+}
+
+/** One raw-text response chunk sequence: the judge round's carrier. */
+function rawText(text: string): readonly StreamChunk[] {
+  return [
+    { type: 'block-start', index: 0, blockType: 'text' },
+    { type: 'text-delta', index: 0, text },
+    { type: 'usage', usage: { inputTokens: 10, outputTokens: 5 } },
+    { type: 'finish', reason: { kind: 'stop' } },
+  ]
+}
+
+/** Judge-response body scoring every given label; BEST names `best`. */
+function judgeBody(best: string, scores: Readonly<Record<string, [number, number, number]>>): string {
+  return [
+    '<<<JUDGE>>>',
+    ...Object.entries(scores).map(([label, [faithfulness, completeness, clarity]]) =>
+      `${label}: faithfulness=${String(faithfulness)} completeness=${String(completeness)} clarity=${String(clarity)} — 简评`),
+    `BEST: ${best}`,
+  ].join('\n')
+}
+
+describe('PromptOptimizer.optimizeCandidates', () => {
+  async function withScriptedCandidates(
+    scripts: readonly (readonly StreamChunk[])[],
+    config: Partial<Config> = {},
+    metrics = false,
+  ): Promise<{ ctx: Context; adapter: ScriptedAdapter; sessionId: SessionId; table?: Map<string, CandidateMetricRow> }> {
+    const ctx = new Context()
+    onTestFinished(() => ctx.fiber.dispose())
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(LlmRuntime)
+    const adapter = new ScriptedAdapter(scripts)
+    ctx.llm.registerAdapter(['current-route'], adapter)
+    let table: Map<string, CandidateMetricRow> | undefined
+    if (metrics) {
+      table = new Map<string, CandidateMetricRow>()
+      ctx.provide('storageDomain', {
+        open: async () => ({
+          table: () => ({
+            get: (key: string) => table.get(key),
+            put: async (key: string, value: MetricRow) => { table.set(key, value) },
+            delete: async (key: string) => table.delete(key),
+            entries: () => table.entries(),
+          }),
+        }),
+      } as never)
+    }
+    await ctx.plugin(PromptOptimizer, { ...CONFIG, ...(metrics ? { metrics: true } : {}), ...config })
+    const session = ctx.sessions.create(SessionId('candidates-session'))
+    session.append('request/header', {
+      header: { config: { provider: 'current-route', model: 'current-model' } },
+      reason: 'initial',
+    })
+    return { ctx, adapter, sessionId: session.id, table }
+  }
+
+  const candidate = (text: string): readonly StreamChunk[] => envelope(text, [])
+
+  it('generates differentiated candidates, judges them, and marks the Pareto frontier', async () => {
+    const { ctx, adapter, sessionId } = await withScriptedCandidates([
+      candidate('候选甲'),
+      candidate('候选乙'),
+      candidate('候选丙'),
+      rawText(judgeBody('B', { A: [8, 8, 9], B: [9, 7, 9], C: [8, 6, 8] })),
+    ])
+
+    const result = await ctx.promptOptimizer.optimizeCandidates({ sessionId, text: '帮我写脚本' }, new AbortController().signal)
+
+    expect(result.candidates.map(entry => entry.label)).toEqual(['A', 'B', 'C'])
+    expect(result.recommended).toBe(1)
+    expect(result.judgeFailed).toBeUndefined()
+    expect(result.candidates[0]).toMatchObject({ total: 25, pareto: true, recommended: false })
+    expect(result.candidates[1]).toMatchObject({ total: 25, pareto: true, recommended: true })
+    expect(result.candidates[2]).toMatchObject({ total: 22, pareto: false, recommended: false })
+    expect(result.provider).toBe('current-route')
+    expect(result.model).toBe('current-model')
+    expect(result.tier).toBe('standard')
+    expect(result.usage).toEqual({ inputTokens: 46, outputTokens: 107 })
+    // Every later candidate saw its siblings; the judge saw every candidate.
+    expect(adapter.requests[1]!.messages[0]!.content[0]).toMatchObject({ text: expect.stringContaining('--- sibling candidate A ---') })
+    expect(adapter.requests[2]!.messages[0]!.content[0]).toMatchObject({ text: expect.stringContaining('--- sibling candidate B ---') })
+    expect(adapter.requests[3]!.messages[0]!.content[0]).toMatchObject({ text: expect.stringContaining('--- candidate C ---') })
+    // The judge dispatch is the fourth logged request and carries the judge marker.
+    const logged = llmRequests(ctx.sessions.get(sessionId)!.snapshotEvents())
+    expect(logged).toHaveLength(4)
+    expect(logged[3]).toMatchObject({ round: 4, judge: true })
+    expect(logged.slice(0, 3).every(record => record.judge === undefined)).toBe(true)
+  })
+
+  it('degrades to unscored candidates when the judge response is unreadable', async () => {
+    const { ctx, sessionId } = await withScriptedCandidates([
+      candidate('候选甲'),
+      candidate('候选乙'),
+      rawText('我不评分'),
+    ])
+
+    const result = await ctx.promptOptimizer.optimizeCandidates({ sessionId, text: '帮我写脚本', count: 2 }, new AbortController().signal)
+
+    expect(result.candidates.map(entry => entry.optimizedText)).toEqual(['候选甲', '候选乙'])
+    expect(result.candidates.every(entry => entry.scores === undefined && entry.pareto === false)).toBe(true)
+    expect(result.recommended).toBe(0)
+    expect(result.judgeFailed).toBe(true)
+    expect(result.judgeError).toContain('no readable scores')
+  })
+
+  it('degrades to unscored candidates when the judge stream fails operationally', async () => {
+    const { ctx, sessionId } = await withScriptedCandidates([
+      candidate('候选甲'),
+      candidate('候选乙'),
+      [
+        { type: 'block-start', index: 0, blockType: 'text' },
+        { type: 'finish', reason: { kind: 'error', failure: { message: 'judge provider failed', code: 'SERVER' } } },
+      ],
+    ])
+
+    const result = await ctx.promptOptimizer.optimizeCandidates({ sessionId, text: '帮我写脚本', count: 2 }, new AbortController().signal)
+
+    expect(result.candidates).toHaveLength(2)
+    expect(result.judgeFailed).toBe(true)
+    expect(result.judgeError).toBe('judge provider failed')
+    expect(result.recommended).toBe(0)
+  })
+
+  it('falls back to the highest total when the judge omits BEST', async () => {
+    const { ctx, sessionId } = await withScriptedCandidates([
+      candidate('候选甲'),
+      candidate('候选乙'),
+      rawText('<<<JUDGE>>>\nA: faithfulness=6 completeness=6 clarity=6\nB: faithfulness=9 completeness=9 clarity=9'),
+    ])
+
+    const result = await ctx.promptOptimizer.optimizeCandidates({ sessionId, text: '帮我写脚本', count: 2 }, new AbortController().signal)
+
+    expect(result.recommended).toBe(1)
+  })
+
+  it('rejects an out-of-range candidate count before dispatching', async () => {
+    const { ctx, adapter, sessionId } = await withScriptedCandidates([candidate('x')])
+    await expect(ctx.promptOptimizer.optimizeCandidates({ sessionId, text: '草稿', count: 5 }, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_BAD_CANDIDATES_COUNT' })
+    expect(adapter.requests).toHaveLength(0)
+  })
+
+  it('declines without force on a reasoning route and bypasses with force', async () => {
+    const declined = await withScriptedCandidates(
+      [candidate('不应出现')],
+      { skipCheck: true, provider: 'current-route', model: 'deepseek-reasoner' },
+    )
+    const draft = '帮我把这个函数改成异步的'
+    const skipped = await declined.ctx.promptOptimizer.optimizeCandidates(
+      { sessionId: declined.sessionId, text: draft }, new AbortController().signal,
+    )
+    expect(skipped).toMatchObject({ skipped: true, skipReason: 'reasoning-short-clear', candidates: [] })
+    expect(declined.adapter.requests).toHaveLength(0)
+
+    const forced = await withScriptedCandidates(
+      [candidate('甲'), candidate('乙'), rawText(judgeBody('A', { A: [8, 8, 8], B: [7, 8, 8] }))],
+      { skipCheck: true, provider: 'current-route', model: 'deepseek-reasoner' },
+    )
+    const result = await forced.ctx.promptOptimizer.optimizeCandidates(
+      { sessionId: forced.sessionId, text: draft, count: 2, force: true }, new AbortController().signal,
+    )
+    expect(result.skipped).toBeUndefined()
+    expect(result.candidates).toHaveLength(2)
+  })
+
+  it('fails typed when a candidate round returns an empty rewrite', async () => {
+    const { ctx, sessionId } = await withScriptedCandidates([envelope('', []), candidate('乙')])
+    await expect(ctx.promptOptimizer.optimizeCandidates({ sessionId, text: '草稿', count: 2 }, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_EMPTY_RESULT' })
+  })
+
+  it('records candidate and judge metrics with the recommended total', async () => {
+    const { ctx, sessionId, table } = await withScriptedCandidates(
+      [candidate('甲'), candidate('乙'), candidate('丙'), rawText(judgeBody('B', { A: [8, 8, 9], B: [9, 7, 9], C: [8, 6, 8] }))],
+      undefined,
+      true,
+    )
+
+    await ctx.promptOptimizer.optimizeCandidates({ sessionId, text: '帮我写脚本' }, new AbortController().signal)
+
+    const rows = [...table!.values()]
+    expect(rows.map(row => row.kind)).toEqual(['candidates-generated', 'judge-score'])
+    expect(rows[0]).toMatchObject({ provider: 'current-route', model: 'current-model', tier: 'standard', count: 3 })
+    expect(rows[1]).toMatchObject({ count: 25 })
+    const summary = await ctx.promptOptimizer.listMetrics(new AbortController().signal)
+    expect(summary).toMatchObject({ candidatesRounds: 1, judgedRounds: 1, judgeAverage: 25 })
+  })
+})

@@ -3,18 +3,24 @@ import { describe, expect, it } from 'vitest'
 import {
   AC_MARKER,
   CHANGES_MARKER,
+  JUDGE_MARKER,
   OPTIMIZED_MARKER,
   QUESTIONS_MARKER,
+  candidateUserInput,
   critiqueSystemPrompt,
   critiqueUserInput,
   detectDomainPriors,
   interviewSystemPrompt,
   interviewUserInput,
+  judgeSystemPrompt,
+  judgeUserInput,
   optimizerSystemPrompt,
   optimizerSystemPromptForSystem,
   optimizerUserInput,
   parseInterviewResponse,
+  parseJudgeResponse,
   parseOptimizerResponse,
+  paretoFlags,
   roleEvolutionSystemPrompt,
   roleEvolutionUserInput,
 } from '../src/meta-prompt.ts'
@@ -402,5 +408,85 @@ describe('clarification conditioning', () => {
     expect(input).toContain('Q: 目标芯片？\nA: STM32F103')
     expect(input.indexOf('Q: 目标芯片？')).toBeLessThan(input.indexOf('帮我写固件'))
     expect(optimizerUserInput('帮我写固件', [])).not.toContain('Q:')
+  })
+})
+
+describe('candidates round inputs and judge parsing', () => {
+  it('injects generated siblings into every later candidate input', () => {
+    const plain = candidateUserInput('帮我写脚本', [], [])
+    expect(plain).not.toContain('sibling candidate')
+    const later = candidateUserInput('帮我写脚本', [], [{ label: 'A', text: '候选甲' }])
+    expect(later).toContain('--- sibling candidate A ---')
+    expect(later).toContain('候选甲')
+    expect(later).toContain('meaningfully different alternative')
+    expect(later.indexOf('sibling candidate A')).toBeLessThan(later.indexOf('帮我写脚本'))
+    const withAnswers = candidateUserInput('帮我写脚本', [{ question: '语言？', answer: 'Python' }], [{ label: 'A', text: '候选甲' }])
+    expect(withAnswers).toContain('Q: 语言？\nA: Python')
+  })
+
+  it('declares the exact judge format', () => {
+    const prompt = judgeSystemPrompt()
+    expect(prompt).toContain(JUDGE_MARKER)
+    expect(prompt).toContain('faithfulness=')
+    expect(prompt).toContain('BEST:')
+  })
+
+  it('labels every candidate in the judge input after the draft', () => {
+    const input = judgeUserInput('原始草稿', [], [{ label: 'A', text: '甲' }, { label: 'B', text: '乙' }])
+    expect(input).toContain('--- original draft ---')
+    expect(input).toContain('--- candidate A ---')
+    expect(input).toContain('--- candidate B ---')
+    expect(input.indexOf('原始草稿')).toBeLessThan(input.indexOf('--- candidate A ---'))
+    const answered = judgeUserInput('原始草稿', [{ question: '语言？', answer: 'Python' }], [{ label: 'A', text: '甲' }])
+    expect(answered).toContain('the user\'s authoritative answers')
+  })
+
+  it('parses scores, clamps out-of-range values, and honors BEST', () => {
+    const response = [
+      JUDGE_MARKER,
+      'A: faithfulness=8 completeness=7 clarity=9 — 稳',
+      'B: faithfulness=11 completeness=-2 clarity=9.7 — 好',
+      'BEST: B',
+    ].join('\n')
+    const parsed = parseJudgeResponse(response, ['A', 'B'])
+    expect(parsed.scores).toEqual([
+      { label: 'A', scores: { faithfulness: 8, completeness: 7, clarity: 9 } },
+      { label: 'B', scores: { faithfulness: 10, completeness: 0, clarity: 9 } },
+    ])
+    expect(parsed.best).toBe('B')
+  })
+
+  it('drops unknown labels, duplicate lines, and a BEST naming an unscored label', () => {
+    const parsed = parseJudgeResponse([
+      JUDGE_MARKER,
+      'A: faithfulness=8 completeness=7 clarity=9',
+      'C: faithfulness=9 completeness=9 clarity=9',
+      'A: faithfulness=1 completeness=1 clarity=1',
+      'BEST: C',
+    ].join('\n'), ['A', 'B'])
+    expect(parsed.scores).toEqual([{ label: 'A', scores: { faithfulness: 8, completeness: 7, clarity: 9 } }])
+    expect(parsed.best).toBeUndefined()
+  })
+
+  it('returns no scores for a response without the marker or readable lines', () => {
+    expect(parseJudgeResponse('我不评分', ['A', 'B']).scores).toEqual([])
+    expect(parseJudgeResponse(`${JUDGE_MARKER}\n随便说说`, ['A', 'B']).scores).toEqual([])
+  })
+})
+
+describe('paretoFlags', () => {
+  const S = (faithfulness: number, completeness: number, clarity: number) => ({ faithfulness, completeness, clarity })
+
+  it('keeps undominated candidates and drops dominated ones', () => {
+    expect(paretoFlags([S(8, 8, 9), S(9, 7, 9), S(8, 6, 8)])).toEqual([true, true, false])
+  })
+
+  it('keeps every equal-scored candidate on the frontier', () => {
+    expect(paretoFlags([S(8, 7, 9), S(8, 7, 9)])).toEqual([true, true])
+  })
+
+  it('keeps trade-off candidates and never marks unscored ones', () => {
+    expect(paretoFlags([S(10, 5, 5), S(5, 10, 5), undefined])).toEqual([true, true, false])
+    expect(paretoFlags([undefined, undefined])).toEqual([false, false])
   })
 })

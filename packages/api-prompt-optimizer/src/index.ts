@@ -3,6 +3,8 @@ import { Context } from '@deepseek-ai/cordis'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@yimiliya/dsh-prompt-optimizer'
 import type {
+  PromptCandidatesRequest,
+  PromptCandidatesResult,
   PromptInterviewRequest,
   PromptInterviewResult,
   PromptLibraryDeleteRequest,
@@ -53,6 +55,25 @@ export default class PromptOptimizerController extends TypertRemoteService {
       signal.throwIfAborted()
       const reason = error instanceof Error ? error.message : String(error)
       throw new RemoteError('prompt-optimizer/optimization-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Run one N-candidate round through the capability service: N differentiated
+   * rewrites plus one judge scoring pass.
+   * @param request - session, draft text, candidate count, and round conditioners.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   * @returns the scored candidates with the recommended index.
+   */
+  @Remote
+  async optimizeCandidates(request: PromptCandidatesRequest, signal: AbortSignal): Promise<PromptCandidatesResult> {
+    signal.throwIfAborted()
+    try {
+      return await this.ctx.promptOptimizer.optimizeCandidates(request, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/candidates-failed', reason, { reason }, { cause: error })
     }
   }
 

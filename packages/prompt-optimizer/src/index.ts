@@ -35,6 +35,9 @@ import type {} from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import type {
   ModelTier,
+  PromptCandidate,
+  PromptCandidatesRequest,
+  PromptCandidatesResult,
   PromptClarification,
   PromptInterviewRequest,
   PromptInterviewResult,
@@ -58,16 +61,21 @@ import type {
   PromptVerifyResult,
 } from './types.ts'
 import {
+  candidateUserInput,
   critiqueSystemPrompt,
   critiqueUserInput,
   detectDomainPriors,
   interviewSystemPrompt,
   interviewUserInput,
+  judgeSystemPrompt,
+  judgeUserInput,
   optimizerSystemPrompt,
   optimizerSystemPromptForSystem,
   optimizerUserInput,
   parseInterviewResponse,
+  parseJudgeResponse,
   parseOptimizerResponse,
+  paretoFlags,
   roleEvolutionSystemPrompt,
   roleEvolutionUserInput,
 } from './meta-prompt.ts'
@@ -135,6 +143,8 @@ export interface PromptOptimizerLlmRequestEventData {
   readonly tier?: ModelTier
   /** Number of interview answers the round's input carried; absent for a plain round. */
   readonly clarifications?: number
+  /** True for a candidates round's judge dispatch: the round scores candidates, it does not rewrite. */
+  readonly judge?: boolean
 }
 
 /** One round the precheck declined to rewrite, recorded instead of a dispatch. */
@@ -227,6 +237,12 @@ const LIBRARY_MAX_ENTRIES = 100
 const MAX_PREVIOUS_ATTEMPTS = 5
 /** Most interview answers one optimize request may carry. */
 const MAX_CLARIFICATIONS = 6
+/** Smallest candidate count one candidates round accepts. */
+const CANDIDATE_MIN = 2
+/** Largest candidate count one candidates round accepts. */
+const CANDIDATE_MAX = 4
+/** Candidate count used when a request carries none. */
+const CANDIDATE_DEFAULT = 3
 /** Metric kinds a client may report; host-written kinds are never accepted from the wire. */
 const CLIENT_METRIC_KINDS: readonly PromptMetricKind[] = ['adopted', 'rejected', 'decline-overridden']
 /** Most metric rows kept on disk; the oldest beyond the cap are pruned on write. */
@@ -557,6 +573,35 @@ function responseText(blocks: readonly ContentBlock[]): string {
 }
 
 /**
+ * Sum token usage over every round one multi-round call dispatched. Optional
+ * counters join the sum only when at least one round reported them.
+ * @param usages - per-round usage chunks; undefined entries are skipped.
+ * @returns the summed usage, or undefined when no round reported one.
+ */
+function sumTokenUsage(usages: readonly (TokenUsage | undefined)[]): TokenUsage | undefined {
+  const present = usages.filter((usage): usage is TokenUsage => usage !== undefined)
+  if (present.length === 0) return undefined
+  const sumOf = (pick: (usage: TokenUsage) => number | undefined): number | undefined => {
+    const defined = present.map(pick).filter((value): value is number => value !== undefined)
+    return defined.length === 0 ? undefined : defined.reduce((total, value) => total + value, 0)
+  }
+  const inputTokens = present.reduce((total, usage) => total + usage.inputTokens, 0)
+  const outputTokens = present.reduce((total, usage) => total + usage.outputTokens, 0)
+  const totalTokens = sumOf(usage => usage.totalTokens)
+  const cacheReadTokens = sumOf(usage => usage.cacheReadTokens)
+  const cacheWriteTokens = sumOf(usage => usage.cacheWriteTokens)
+  const reasoningTokens = sumOf(usage => usage.reasoningTokens)
+  return {
+    inputTokens,
+    outputTokens,
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+    ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+  }
+}
+
+/**
  * One-round draft optimizer registered as `ctx.promptOptimizer`.
  */
 export default class PromptOptimizer extends Service {
@@ -610,6 +655,7 @@ export default class PromptOptimizer extends Service {
     readonly direction: PromptOptimizeDirection | undefined
     readonly tier: ModelTier
     readonly clarifications: number
+    readonly judge: boolean
   }, signal: AbortSignal): Promise<{ parsed: ReturnType<typeof parseOptimizerResponse>; usage: TokenUsage | undefined }> {
     const messages: Message[] = [createUserMessage({
       content: [{ type: 'text', text: options.input }],
@@ -649,6 +695,7 @@ export default class PromptOptimizer extends Service {
       ...(options.direction !== undefined ? { direction: options.direction } : {}),
       tier: options.tier,
       ...(options.clarifications > 0 ? { clarifications: options.clarifications } : {}),
+      ...(options.judge ? { judge: true } : {}),
     })
     callDeadline.signal.throwIfAborted()
     const assembler = new BlockAssembler()
@@ -769,6 +816,7 @@ export default class PromptOptimizer extends Service {
       direction,
       tier,
       clarifications: clarifications.length,
+      judge: false,
     }, signal)
     if (first.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the model returned an empty rewrite')
@@ -802,6 +850,7 @@ export default class PromptOptimizer extends Service {
       direction,
       tier,
       clarifications: clarifications.length,
+      judge: false,
     }, signal)
     if (critique.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the critique round returned an empty rewrite')
@@ -817,6 +866,212 @@ export default class PromptOptimizer extends Service {
       tier,
       ...(role !== undefined ? { role: role.id } : {}),
       ...(direction !== undefined ? { direction } : {}),
+      ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
+      ...(usage !== undefined ? { usage } : {}),
+    }
+  }
+
+  /**
+   * Execute one N-candidate round: N sequential rewrites where every later
+   * candidate sees its siblings and must differentiate, then one judge round
+   * scoring each candidate on faithfulness, completeness, and clarity. The
+   * Pareto frontier over those dimensions and the judge's best pick drive the
+   * client's candidate comparison. A judge-round failure degrades to unscored
+   * candidates instead of failing the call.
+   * @param request - session, draft text, candidate count, and round conditioners.
+   * @param signal - caller cancellation.
+   * @returns the scored candidates with the recommended index and exact route.
+   * @throws when the session is gone, bounds fail, the decline precheck fires
+   * without `force`, a rewrite round returns empty, or the deadline or
+   * cancellation fires.
+   */
+  async optimizeCandidates(request: PromptCandidatesRequest, signal: AbortSignal): Promise<PromptCandidatesResult> {
+    signal.throwIfAborted()
+    const session = this.ctx.sessions.get(request.sessionId)
+    if (session === undefined) {
+      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
+    }
+    const inputBytes = Buffer.byteLength(request.text, 'utf8')
+    if (request.text.trim() === '') {
+      fail('PROMPT_OPTIMIZER_EMPTY_DRAFT', 'prompt-optimizer: draft is empty')
+    }
+    if (inputBytes > this.config.maxInputBytes) {
+      fail('PROMPT_OPTIMIZER_INPUT_TOO_LARGE', `prompt-optimizer: draft is ${inputBytes} bytes, exceeding maxInputBytes ${this.config.maxInputBytes}`)
+    }
+    const count = request.count ?? CANDIDATE_DEFAULT
+    if (!Number.isInteger(count) || count < CANDIDATE_MIN || count > CANDIDATE_MAX) {
+      fail('PROMPT_OPTIMIZER_BAD_CANDIDATES_COUNT', `prompt-optimizer: count must be an integer between ${String(CANDIDATE_MIN)} and ${String(CANDIDATE_MAX)}`)
+    }
+    const direction = request.direction
+    if (direction !== undefined && !DIRECTIONS.includes(direction)) {
+      fail('PROMPT_OPTIMIZER_BAD_DIRECTION', `prompt-optimizer: unknown direction "${direction}"; expected one of ${DIRECTIONS.join(', ')}`)
+    }
+    const clarifications = normalizeClarifications(request.clarifications, this.config.maxInputBytes)
+    const requestedRole = request.role ?? this.config.defaultRole
+    const role = requestedRole === undefined ? undefined : await this.loadRole(requestedRole, signal)
+    const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+    const tier = classifyModelTier(route.provider, route.model)
+    const priors = this.config.domainPriors ? detectDomainPriors(request.text) : []
+    if (this.config.skipCheck && request.force !== true) {
+      const skipReason = declineToOptimize({
+        tier,
+        target: 'draft',
+        draft: request.text,
+        domainPriors: priors,
+        role: requestedRole,
+        direction,
+        previousAttempts: [],
+        clarifications,
+      })
+      if (skipReason !== undefined) {
+        appendPluginRecord(session, 'plugin:prompt-optimizer/skipped', {
+          reason: skipReason,
+          tier,
+          target: 'draft',
+          inputBytes,
+        })
+        await this.recordMetric('declined', route, tier, 1)
+        return {
+          candidates: [],
+          recommended: 0,
+          provider: route.provider,
+          model: route.model,
+          tier,
+          skipped: true,
+          skipReason,
+        }
+      }
+    }
+    const language = normalizeLanguage(request.language)
+    if (clarifications.length > 0) {
+      await this.recordMetric('clarified', route, tier, clarifications.length)
+    }
+    const rankingContext = [request.text, this.inboxText(session)].filter(part => part !== '').join('\n')
+    const skills = await this.resolveSkillHints(session, rankingContext, signal)
+    signal.throwIfAborted()
+    const conditioning: RoundConditioning = {
+      domainPriors: priors,
+      skills,
+      tier,
+      ...(clarifications.length > 0 ? { clarifications } : {}),
+      ...(role !== undefined ? { role } : {}),
+      ...(language !== undefined ? { language } : {}),
+      ...(direction !== undefined ? { direction } : {}),
+    }
+    const generated: { label: string; optimizedText: string; changes: readonly string[]; acceptance: PromptCandidate['acceptance']; usage: TokenUsage | undefined }[] = []
+    for (let index = 0; index < count; index += 1) {
+      signal.throwIfAborted()
+      const label = String.fromCharCode('A'.charCodeAt(0) + index)
+      const round = await this.dispatchRound(session, {
+        route,
+        target: 'draft',
+        round: index + 1,
+        system: optimizerSystemPrompt(conditioning),
+        input: candidateUserInput(
+          request.text,
+          clarifications,
+          generated.map(candidate => ({ label: candidate.label, text: candidate.optimizedText })),
+        ),
+        inputBytes,
+        previousAttempts: [],
+        sessionId: request.sessionId,
+        role,
+        skillsHinted: skills.length,
+        language,
+        direction,
+        tier,
+        clarifications: clarifications.length,
+        judge: false,
+      }, signal)
+      if (round.parsed.optimizedText === '') {
+        fail('PROMPT_OPTIMIZER_EMPTY_RESULT', `prompt-optimizer: candidate ${label} came back empty`)
+      }
+      generated.push({
+        label,
+        optimizedText: round.parsed.optimizedText,
+        changes: round.parsed.changes,
+        acceptance: round.parsed.acceptance,
+        usage: round.usage,
+      })
+    }
+    let judged: ReturnType<typeof parseJudgeResponse> | undefined
+    let judgeError: string | undefined
+    let judgeUsage: TokenUsage | undefined
+    try {
+      signal.throwIfAborted()
+      const judgeRound = await this.dispatchRound(session, {
+        route,
+        target: 'draft',
+        round: count + 1,
+        system: judgeSystemPrompt(),
+        input: judgeUserInput(
+          request.text,
+          clarifications,
+          generated.map(candidate => ({ label: candidate.label, text: candidate.optimizedText })),
+        ),
+        inputBytes,
+        previousAttempts: [],
+        sessionId: request.sessionId,
+        role,
+        skillsHinted: skills.length,
+        language,
+        direction,
+        tier,
+        clarifications: clarifications.length,
+        judge: true,
+      }, signal)
+      judged = parseJudgeResponse(judgeRound.parsed.optimizedText, generated.map(candidate => candidate.label))
+      judgeUsage = judgeRound.usage
+      if (judged.scores.length === 0) {
+        judgeError = 'the judge round produced no readable scores'
+        judged = undefined
+      }
+    } catch (error) {
+      signal.throwIfAborted()
+      judgeError = error instanceof Error ? error.message : String(error)
+    }
+    const scoresByLabel = new Map((judged?.scores ?? []).map(entry => [entry.label, entry.scores]))
+    const flags = paretoFlags(generated.map(candidate => scoresByLabel.get(candidate.label)))
+    let recommendedIndex = 0
+    if (judged !== undefined) {
+      const totalOf = (label: string): number => {
+        const scores = scoresByLabel.get(label)!
+        return scores.faithfulness + scores.completeness + scores.clarity
+      }
+      const bestLabel = judged.best
+      recommendedIndex = bestLabel === undefined
+        ? generated.reduce((best, candidate, index) => totalOf(candidate.label) > totalOf(generated[best]!.label) ? index : best, 0)
+        : Math.max(0, generated.findIndex(candidate => candidate.label === bestLabel))
+    }
+    const candidates: readonly PromptCandidate[] = generated.map((candidate, index) => {
+      const scores = scoresByLabel.get(candidate.label)
+      return {
+        label: candidate.label,
+        optimizedText: candidate.optimizedText,
+        changes: candidate.changes,
+        acceptance: candidate.acceptance,
+        ...(scores !== undefined
+          ? { scores, total: scores.faithfulness + scores.completeness + scores.clarity }
+          : {}),
+        pareto: flags[index] === true,
+        recommended: index === recommendedIndex,
+      }
+    })
+    await this.recordMetric('candidates-generated', route, tier, count)
+    if (judged !== undefined) {
+      const recommendedTotal = candidates[recommendedIndex]?.total
+      if (recommendedTotal !== undefined) {
+        await this.recordMetric('judge-score', route, tier, recommendedTotal)
+      }
+    }
+    const usage = sumTokenUsage([...generated.map(candidate => candidate.usage), judgeUsage])
+    return {
+      candidates,
+      recommended: recommendedIndex,
+      ...(judgeError !== undefined ? { judgeFailed: true, judgeError } : {}),
+      provider: route.provider,
+      model: route.model,
+      tier,
       ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
       ...(usage !== undefined ? { usage } : {}),
     }
@@ -871,6 +1126,7 @@ export default class PromptOptimizer extends Service {
       direction: undefined,
       tier,
       clarifications: 0,
+      judge: false,
     }, signal)
     const questions = parseInterviewResponse(round.parsed.optimizedText)
     appendPluginRecord(session, 'plugin:prompt-optimizer/interview', {
@@ -1475,6 +1731,7 @@ export default class PromptOptimizer extends Service {
     const rejected = rowsOf('rejected')
     const verifyPassed = rowsOf('verify-passed')
     const verifyFailed = rowsOf('verify-failed')
+    const judgeRows = rows.filter(row => row.kind === 'judge-score')
     const decided = adopted + rejected
     const verified = verifyPassed + verifyFailed
     return {
@@ -1486,6 +1743,11 @@ export default class PromptOptimizer extends Service {
       clarifiedRounds: rowsOf('clarified'),
       verifyPassed,
       verifyFailed,
+      candidatesRounds: rowsOf('candidates-generated'),
+      judgedRounds: judgeRows.length,
+      judgeAverage: judgeRows.length === 0
+        ? null
+        : judgeRows.reduce((total, row) => total + row.count, 0) / judgeRows.length,
       adoptionRate: decided === 0 ? null : adopted / decided,
       verifyPassRate: verified === 0 ? null : verifyPassed / verified,
       rows: rows.length,

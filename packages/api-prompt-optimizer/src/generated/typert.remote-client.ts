@@ -5,6 +5,8 @@ import { z } from 'zod'
 import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-info'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
+  PromptCandidatesRequest,
+  PromptCandidatesResult,
   PromptInterviewRequest,
   PromptInterviewResult,
   PromptLibraryDeleteRequest,
@@ -32,6 +34,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     listPrompts: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     listRoles: (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
     optimize: (request: PromptOptimizeRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptOptimizeResult>>
+    optimizeCandidates: (request: PromptCandidatesRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptCandidatesResult>>
     recommendRoles: (request: PromptRoleRecommendRequest, signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleRecommendation[]>>
     reportMetric: (request: PromptMetricReportRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     savePrompt: (request: PromptLibrarySaveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptLibraryEntry>>
@@ -45,6 +48,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'promptOptimizer/listPrompts': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptLibraryEntry[]>>
     'promptOptimizer/listRoles': (signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleSummary[]>>
     'promptOptimizer/optimize': (request: PromptOptimizeRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptOptimizeResult>>
+    'promptOptimizer/optimizeCandidates': (request: PromptCandidatesRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptCandidatesResult>>
     'promptOptimizer/recommendRoles': (request: PromptRoleRecommendRequest, signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleRecommendation[]>>
     'promptOptimizer/reportMetric': (request: PromptMetricReportRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     'promptOptimizer/savePrompt': (request: PromptLibrarySaveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptLibraryEntry>>
@@ -162,6 +166,58 @@ const _optimize_result = () => (_optimize_result$value ??= z.object({
     'reasoningTokens': z.number().optional(),
   }).readonly().optional().describe('Usage from the stream\'s `usage` chunk; absent until one arrives.'),
 }))
+let _optimizeCandidates_parameter_0$value
+const _optimizeCandidates_parameter_0 = () => (_optimizeCandidates_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session whose draft is being optimized; owns the request log and route fallback.'),
+  'text': z.string().readonly().describe('Complete current draft text, exactly as the composer holds it.'),
+  'count': z.number().readonly().optional().describe('How many candidates to generate; default 3, allowed 2–4.'),
+  'role': z.string().readonly().optional().describe('Role slug whose definition styles every candidate; absent for a generic rewrite.'),
+  'language': z.string().readonly().optional().describe('Self-describing name of the language every candidate must be written in (for example `中文`); absent keeps the draft\'s language.'),
+  'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional().describe('Direction every candidate pushes toward; absent applies the plain rules.'),
+  'force': z.boolean().readonly().optional().describe('True bypasses the decline-to-optimize precheck and forces the rounds.'),
+  'clarifications': z.array(z.object({
+    'question': z.string().readonly().describe('The question text exactly as the interview round asked it.'),
+    'answer': z.string().readonly().describe('The user\'s answer, verbatim.'),
+  })).readonly().optional().describe('Interview answers folded into every candidate as first-class requirements; absent for a plain round.'),
+}))
+let _optimizeCandidates_result$value
+const _optimizeCandidates_result = () => (_optimizeCandidates_result$value ??= z.object({
+  'candidates': z.array(z.object({
+    'label': z.string().readonly().describe('Stable candidate label: `A`, `B`, `C`, `D`.'),
+    'optimizedText': z.string().readonly().describe('Rewritten prompt text; never empty for a completed candidate.'),
+    'changes': z.array(z.string()).readonly().describe('Short per-change accounts in the draft\'s language; empty when the model listed none.'),
+    'acceptance': z.array(z.object({
+      'text': z.string().readonly().describe('Criterion statement in the draft\'s language.'),
+      'kind': z.union([z.literal('mechanical'), z.literal('llm')]).readonly().describe('`mechanical` when a runnable check command verifies it; `llm` when only judgment can.'),
+      'commandTemplate': z.string().readonly().optional().describe('Runnable check command for a `mechanical` criterion; absent for `llm`.'),
+    })).readonly().describe('Draft acceptance criteria; empty when the model listed none.'),
+    'scores': z.object({
+      'faithfulness': z.number().readonly().describe('How faithfully the candidate preserves the draft\'s stated facts and intent, adding nothing.'),
+      'completeness': z.number().readonly().describe('How completely it pins the constraints, inputs, and success criteria the draft implies.'),
+      'clarity': z.number().readonly().describe('How clear and immediately executable it is for the receiving agent.'),
+    }).readonly().optional().describe('Judge scores; absent when the judge round scored no candidate.'),
+    'total': z.number().readonly().optional().describe('Sum of the three judge scores; present exactly when `scores` is.'),
+    'pareto': z.boolean().readonly().describe('True when no scored sibling dominates this candidate on every dimension.'),
+    'recommended': z.boolean().readonly().describe('True for the single candidate the round recommends.'),
+  })).readonly().describe('Generated candidates in generation order; empty exactly when `skipped` is true.'),
+  'recommended': z.number().readonly().describe('Index into `candidates` of the recommended pick.'),
+  'judgeFailed': z.boolean().readonly().optional().describe('True when the judge round failed or produced no readable scores; candidates then carry none.'),
+  'judgeError': z.string().readonly().optional().describe('Failure message of a degraded judge round; present exactly when `judgeFailed` is true.'),
+  'provider': z.string().readonly().describe('Exact provider route that produced the candidates.'),
+  'model': z.string().readonly().describe('Exact model id that produced the candidates.'),
+  'skills': z.array(z.string()).readonly().optional().describe('Names of the installed-skill hints that conditioned the rounds; absent when none matched.'),
+  'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional().describe('Capability tier of the route that produced the candidates.'),
+  'skipped': z.boolean().readonly().optional().describe('True when the precheck declined the rounds; `candidates` is then empty.'),
+  'skipReason': z.literal('reasoning-short-clear').readonly().optional().describe('Stable reason the precheck declined; present exactly when `skipped` is true.'),
+  'usage': z.object({
+    'inputTokens': z.number(),
+    'outputTokens': z.number(),
+    'totalTokens': z.number().optional(),
+    'cacheReadTokens': z.number().optional(),
+    'cacheWriteTokens': z.number().optional(),
+    'reasoningTokens': z.number().optional(),
+  }).readonly().optional().describe('Usage summed over every round the call dispatched; absent until one arrives.'),
+}))
 let _recommendRoles_parameter_0$value
 const _recommendRoles_parameter_0 = () => (_recommendRoles_parameter_0$value ??= z.object({
   'sessionId': z.string().readonly().describe('Session whose pending inbox joins the recommendation context.'),
@@ -272,6 +328,20 @@ const _savePrompt_parameter_0_strict = () => (_savePrompt_parameter_0_strict$val
   'sessionId': z.string().readonly(),
   'title': z.string().readonly(),
   'text': z.string().readonly(),
+}))
+let _optimizeCandidates_parameter_0_strict$value
+const _optimizeCandidates_parameter_0_strict = () => (_optimizeCandidates_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+  'text': z.string().readonly(),
+  'count': z.number().readonly().optional(),
+  'role': z.string().readonly().optional(),
+  'language': z.string().readonly().optional(),
+  'direction': z.union([z.literal('concise'), z.literal('detailed'), z.literal('technical'), z.literal('structured'), z.literal('acceptance')]).readonly().optional(),
+  'force': z.boolean().readonly().optional(),
+  'clarifications': z.array(z.object({
+    'question': z.string().readonly(),
+    'answer': z.string().readonly(),
+  })).readonly().optional(),
 }))
 let _verify_parameter_0_strict$value
 const _verify_parameter_0_strict = () => (_verify_parameter_0_strict$value ??= z.strictObject({
@@ -458,6 +528,39 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 43, column: 9 },
+    },
+    'promptOptimizer/optimizeCandidates': {
+      service: 'promptOptimizerController',
+      description: 'Run one N-candidate round through the capability service: N differentiated rewrites plus one judge scoring pass.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'session, draft text, candidate count, and round conditioners.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptCandidatesRequest',
+            create: _optimizeCandidates_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, count: { type: 'number' }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } } }, required: ['sessionId', 'text'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptCandidatesRequest',
+            create: _optimizeCandidates_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, count: { type: 'number' }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } } }, required: ['sessionId', 'text'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptCandidatesResult',
+        create: _optimizeCandidates_result,
+        description: 'the scored candidates with the recommended index.',
+        jsonSchema: { type: 'object', properties: { candidates: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, scores: { type: 'object', properties: { faithfulness: { type: 'number' }, completeness: { type: 'number' }, clarity: { type: 'number' } }, required: ['faithfulness', 'completeness', 'clarity'], additionalProperties: true }, total: { type: 'number' }, pareto: { type: 'boolean' }, recommended: { type: 'boolean' } }, required: ['label', 'optimizedText', 'changes', 'acceptance', 'pareto', 'recommended'], additionalProperties: true } }, recommended: { type: 'number' }, judgeFailed: { type: 'boolean' }, judgeError: { type: 'string' }, provider: { type: 'string' }, model: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['candidates', 'recommended', 'provider', 'model'], additionalProperties: true },
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 62, column: 9 },
     },
     'promptOptimizer/recommendRoles': {
       service: 'promptOptimizerController',

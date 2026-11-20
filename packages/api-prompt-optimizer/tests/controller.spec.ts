@@ -233,3 +233,35 @@ it('forwards a role evolution and wraps its failure typed', async () => {
   await expect(failingApi.evolveRole(request, new AbortController().signal))
     .rejects.toMatchObject({ details: { reason: 'no adapter' } })
 })
+
+const CANDIDATES_RESULT = {
+  candidates: [
+    { label: 'A', optimizedText: '候选甲', changes: [], acceptance: [], scores: { faithfulness: 8, completeness: 8, clarity: 9 }, total: 25, pareto: true, recommended: false },
+    { label: 'B', optimizedText: '候选乙', changes: [], acceptance: [], scores: { faithfulness: 9, completeness: 7, clarity: 9 }, total: 25, pareto: true, recommended: true },
+  ],
+  recommended: 1,
+  provider: 'current-route',
+  model: 'current-model',
+}
+
+it('forwards a candidates request to the capability service unchanged', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const optimizeCandidates = vi.fn(async () => CANDIDATES_RESULT)
+  ctx.provide('promptOptimizer', { optimizeCandidates } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = { sessionId: 'session-1' as never, text: '帮我写脚本' }
+
+  await expect(api.optimizeCandidates(request, new AbortController().signal)).resolves.toEqual(CANDIDATES_RESULT)
+  expect(optimizeCandidates).toHaveBeenCalledExactlyOnceWith(request, expect.any(AbortSignal))
+})
+
+it('wraps a candidates failure as the typed Remote error', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  ctx.provide('promptOptimizer', { optimizeCandidates: vi.fn(async () => { throw new Error('no adapter') }) } as never)
+  const api = new PromptOptimizerController(ctx)
+
+  await expect(api.optimizeCandidates({ sessionId: 'session-1' as never, text: 'draft' }, new AbortController().signal))
+    .rejects.toMatchObject({ code: 'prompt-optimizer/candidates-failed', details: { reason: 'no adapter' } })
+})

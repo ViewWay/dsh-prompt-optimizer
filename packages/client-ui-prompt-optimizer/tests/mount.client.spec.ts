@@ -31,6 +31,7 @@ const SESSION = 'session-1' as SessionId
 const EMPTY_METRICS = {
   adopted: 0, rejected: 0, declined: 0, declineOverridden: 0,
   interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
+  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null,
   adoptionRate: null, verifyPassRate: null, rows: 0,
 }
 const RESULT = {
@@ -115,6 +116,8 @@ type MountedActions = {
   apply: (sessionId: SessionId) => void
   regenerate: (sessionId: SessionId) => void
   regenerateAsRole: (sessionId: SessionId, role: string | undefined) => void
+  regenerateCandidates: (sessionId: SessionId) => void
+  selectCandidate: (sessionId: SessionId, index: number) => void
   startInterview: (sessionId: SessionId, text: string, apply: (text: string) => void, role?: string) => void
   answerInterview: (sessionId: SessionId, index: number, value: string) => void
   submitInterview: (sessionId: SessionId) => void
@@ -484,6 +487,50 @@ it('reports rejected and adopted decisions as local metrics', async () => {
         expect.any(AbortSignal),
       )
     })
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('runs a candidates round, reports the discarded result, and switches the picked candidate', async () => {
+  const CANDIDATES = {
+    candidates: [
+      { label: 'A', optimizedText: '候选甲', changes: [], acceptance: [], scores: { faithfulness: 8, completeness: 8, clarity: 9 }, total: 25, pareto: true, recommended: false },
+      { label: 'B', optimizedText: '候选乙', changes: [], acceptance: [], scores: { faithfulness: 9, completeness: 7, clarity: 9 }, total: 25, pareto: true, recommended: true },
+    ],
+    recommended: 1,
+    provider: 'current-route',
+    model: 'current-model',
+  }
+  const optimizeCandidates = vi.fn(async () => ({ ok: true as const, value: CANDIDATES }))
+  const reportMetric = vi.fn(async () => ({ ok: true as const, value: undefined }))
+  const b = await fixture(undefined, undefined, true, { optimizeCandidates, reportMetric })
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx)
+    const applied: string[] = []
+    actions.start(SESSION, 'draft', (text) => { applied.push(text) })
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+
+    actions.regenerateCandidates(SESSION)
+    await vi.waitFor(() => { expect(optimizeCandidates).toHaveBeenCalledTimes(1) })
+    expect(optimizeCandidates).toHaveBeenCalledWith({ sessionId: SESSION, text: 'draft', language: 'English', force: true }, expect.any(AbortSignal))
+    await vi.waitFor(() => {
+      expect(reportMetric).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'rejected', provider: 'current-route', model: 'current-model' }),
+        expect.any(AbortSignal),
+      )
+    })
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+    expect(stateOf(b.ctx)?.result?.optimizedText).toBe('候选乙')
+    expect(stateOf(b.ctx)?.selectedCandidate).toBe(1)
+
+    actions.selectCandidate(SESSION, 0)
+    expect(stateOf(b.ctx)?.result?.optimizedText).toBe('候选甲')
+    expect(stateOf(b.ctx)?.selectedCandidate).toBe(0)
+
+    actions.apply(SESSION)
+    expect(applied).toEqual(['候选甲'])
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }
 })

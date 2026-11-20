@@ -101,6 +101,10 @@ export function PromptOptimizerSettings(props: PromptOptimizerSettingsProps) {
             <li>{t('settingsMetricsVerify', { value: percentOf(metrics.verifyPassRate) })}</li>
             <li>{t('settingsMetricsDeclined', { count: String(metrics.declined), overridden: String(metrics.declineOverridden) })}</li>
             <li>{t('settingsMetricsInterview', { questions: String(metrics.interviewQuestions), rounds: String(metrics.clarifiedRounds) })}</li>
+            <li>{t('settingsMetricsCandidates', {
+              rounds: String(metrics.candidatesRounds),
+              average: metrics.judgeAverage === null ? '—' : metrics.judgeAverage.toFixed(1),
+            })}</li>
           </ul>}
     </div>
   </>
