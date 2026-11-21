@@ -1,86 +1,137 @@
+![The prompt optimizer preview panel: the rewritten prompt, the change log, and the acceptance criteria side by side with the draft](docs/img/preview.png)
+
 # dsh-prompt-optimizer
 
+[English](README.md) · [简体中文](README_zh.md)
+
 [![CI](https://github.com/ViewWay/dsh-prompt-optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/ViewWay/dsh-prompt-optimizer/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@yimiliya/dsh-prompt-optimizer-bundle)](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer-bundle)
+[![GitHub stars](https://img.shields.io/github/stars/ViewWay/dsh-prompt-optimizer?style=social)](https://github.com/ViewWay/dsh-prompt-optimizer)
+[![dshfind](https://dshfind.com/api/badge/ViewWay/dsh-prompt-optimizer)](https://dshfind.com/en/plugins/ViewWay/dsh-prompt-optimizer?ref=badge)
 
-A standalone, independently distributed plugin family for the DeepSeek Harness that turns a rough idea draft into a polished, agent-ready prompt through iterative **rewrite → self-review → fix** rounds.
+**The DeepSeek Harness plugin that turns a rough idea draft into an agent-ready prompt** — iterative **rewrite → self-review → fix** rounds, with every intermediate artifact exposed for review instead of hidden.
 
-[English](README.md) | [简体中文](README_zh.md)
+A standalone, independently distributed plugin family. One install adds five entry points on the input row and a preview panel that makes optimization auditable:
 
-## Features
+| Entry | What it does |
+| --- | --- |
+| **Optimize** | One click on the input box rewrites the draft; domain recommendation chips suggest a fitting role first |
+| **Intent interview** (`?`) | Up to three domain-conditioned clarifying questions with clickable candidates, answered *before* the rewrite |
+| **Acceptance-first** | Mechanical acceptance criteria ship with an executable check-command template |
+| **Multi-candidate** | 2–4 differentiated rewrites scored by one judge round, Pareto marks and a recommended pick |
+| **Context checkup** | A deterministic, zero-LLM scan of the session's standing system prompt and invocable skills — with one-click repairs for fixable findings |
+| **Prompt library** | Save any result, then browse, insert, re-optimize or delete it from the input row |
 
-- One-click **Optimize** button on the input box plus domain recommendation chips; multi-round optimization with retry and per-round diff preview
-- **Role library** (`<slug>.md` files): a 164-role catalog ships inside the package and is used whenever `rolesDir` is unset; list roles on demand, recommend by draft, re-run with an explicit role; set a default role in the settings page
-- **Skill awareness** (`skillAware`): when a draft matches an installed skill, its name and description are folded into the meta-prompt so the output references those skills — guarded by exact-name constraints against hallucination. Chinese and English drafts both match: a built-in bilingual gloss bridges Chinese terms like 页面／接口／部署 to English-described skills and back
-- **Optimization directions**: five chips on the preview panel (more concise / more detailed / more technical / restructure / stronger acceptance) re-run the round toward a picked direction and echo the active one; directions are a fixed enum — no free text, so no prompt injection
-- **Model-tier awareness**: the rewrite conditions on the resolved route's capability tier — reasoning models get scaffolding-free, specification-dense rewrites; small local models behind LiteLLM/vLLM/Ollama get every invariant spelled out
-- **Decline to optimize** (`skipCheck`): a short, clear, generic draft on a reasoning model is declined with an explanation instead of rewritten — the honest "this is better sent as is"; any explicit rerun still dispatches
-- **Intent interview** (clarify-first): a `?` trigger on the input row asks up to three domain-conditioned clarifying questions with clickable candidates before rewriting; the answers ride into the round as authoritative requirements and survive every rerun — "nothing worth asking" falls straight through to the plain round
-- **Local metrics** (`metrics`): every round's outcome is counted locally — adoption rate, verify pass rate, declines and overrides, interview questions — and rendered on the settings page; rows carry the route and timestamp only, never draft content
-- **Model-switch reminder + golden guard** (P2c): every system-prompt round records the route it was tuned on (per session, local only); when a later round resolves a different model, the preview panel says the standing system prompt was tuned for the old route and suggests re-running the system optimization — tier-specific guidance goes stale exactly when the model changes. Template changes are guarded by a byte-identical golden suite over every meta-prompt, so no rewrite-quality regression ships unnoticed
-- **Context checkup** (P4): one deterministic, no-LLM scan of the session's standing context — the assembled system prompt's sections (per-section sizing, share of the whole, rough token estimate) plus every model-invocable skill the registry lists for the working directory (deep-read bodies, duplicate detection, stale file-reference checks against each skill's directory) — surfacing oversized blocks, near-duplicate sections or skills, and references to files that no longer exist; opened from the input row, rendered as a report card with findings
-- **Context repair** (P5): every fixable checkup finding now has a repair — stale file references are stripped deterministically (with a nearest-existing-file suggestion), duplicate skills merge over one model round into the first definition (the retired half becomes a labeled tombstone, both originals kept as `.bak`), and duplicate system-prompt sections get an advisory merged replacement to copy by hand; every write is preview → confirm → rescan
-- **Skill evolution** (P6a): once a draft shape is distilled, the next repeat threshold suggests *updating that skill* instead of distilling a fresh one — one evolution round folds the newer round's requirements into the existing definition and overwrites it in place (`.bak` kept)
-- **Adoption feedback** (P6b): every applied result is remembered as a same-domain precedent (best 3 per domain, ranked by judge score then recency) and later rounds in that domain reference it as prior art — reference-only, never copied; local-small routes skip the block; `precedents` config turns storage off
-- **Evidence pack** (P7): a bundled, domain-interleaved set of fuzzy sample drafts answers "does optimization actually help on this route?" — one click rewrites and judge-scores each sample raw-vs-optimized inside the context-checkup panel; results land in the local-metrics card, and the model-switch staleness note now points at re-running the comparison
-- **Acceptance-first mode** (P8): a dedicated trigger runs the goal interview whose first question always pins the observable definition of done; the answer compiles into authoritative `goalCriteria` the rewrite must satisfy and restate, while further answers stay ordinary clarifications
-- **Skill distillation** (P3): the host fingerprints every completed round (a one-way normalized-draft hash — never content); on the third optimization of the same draft the panel offers to distill it into a durable agent skill — one model round drafts a `SKILL.md` (frontmatter name/description plus a progressive-disclosure body), you review it, and the confirm writes it into the session project's `.dsh/skills` (or a configured `distillDir`), where the harness skill registry picks it up immediately — the recurring prompt becomes a named, invocable asset instead of another rewrite
-- **Candidate comparison** (P2b): one trigger generates 2–4 differentiated candidate rewrites — every later candidate sees its siblings and must make different trade-offs — then one judge round scores each on faithfulness, completeness, and clarity (0–10); the panel shows the labeled candidates with totals, Pareto-optimal marks, and the judge's recommended pick, and picking a candidate swaps it into the normal apply/library/evolution flows; a failed judge degrades to unscored candidates instead of failing the round
-- **Prompt library**: save any result with one click; the library button on the input row opens a management panel — browse, expand, insert into the draft, re-optimize from a stored entry, or delete with a two-step confirm (newest first)
-- **Output language follows the agent UI language**: a Chinese interface yields Chinese prompts, English yields English, while code identifiers, paths and commands stay verbatim
-- Inline **Optimize** entry on queued (unsent) conversation items
-- **Acceptance criteria**: mechanical criteria ship with an executable check-command template
+![The input row with a draft, role recommendation chips, and the five optimizer entries](docs/img/composer.png)
 
-## Judging an optimization
-
-The result is more than the rewritten text — every block in the preview panel is review material:
+Every round is reviewable, not a black box — the preview panel puts the draft and the result side by side with the change log, acceptance criteria, and matched skills:
 
 | Panel block | What it is | How to judge with it |
 | --- | --- | --- |
 | Optimized text | The rewritten prompt | Read it against the draft column, section by section |
 | Changes | Each edit the model says it made | Ask per bullet: did it make the task clearer? Was anything changed that should not have been? |
 | Acceptance criteria | Conditions that define done | Mechanical ones run via the check button; the rest verify by their stated judgment point — none verifiable means suspicious |
-| Skills | Installed skills matched this round | Skill mentions in the result must use exact listed names; with none listed, the result must not invent any |
+| Skills | Installed skills matched this round | Skill mentions must use exact listed names; with none listed, the result must not invent any |
 | Critique | Revision log of the system-prompt second round | Does each revision say what changed and why? |
 
-Quick checklist:
+Quick checklist: **zero detail loss** (paths, versions, commands, numbers verbatim) · **clear structure** (goal, context, constraints, expected output stated separately) · **no inventions** · **verifiable acceptance** · **sound skill references**. When a check fails: hit **Regenerate** (the rejected result rides in as a prior attempt), click a direction chip (more concise / more detailed / more technical / restructure / stronger acceptance), re-run with another role, or switch to system-prompt mode.
 
-1. **Zero detail loss** — paths, versions, commands, and numbers preserved verbatim;
-2. **Clear structure** — goal, context, constraints, and expected output stated separately;
-3. **No inventions** — no facts the draft never stated (file names, error text, requirements);
-4. **Verifiable acceptance** — every criterion checkable by command or judgment point;
-5. **Sound skill references** — named skills genuinely fit the task and match their exact names.
+## Install / update
 
-When any check fails: hit **Regenerate** — the rejected result rides into the next round as a prior attempt, so the model must produce a meaningfully different revision; or click a direction chip (more concise / more detailed / more technical / restructure / stronger acceptance) to re-run toward that direction; or re-run with another role, or switch to the system-prompt mode. Save what works with **Save to prompt library**, then recall, re-optimize, or delete it any time from the library button on the input row.
+### In the DeepSeek Harness web or desktop client
 
-## Repository layout
+Search `@yimiliya/dsh-prompt-optimizer-bundle` in the **Add plugin** wizard, then click **Install**. The bundle stacks `prompt-optimizer`, `api-prompt-optimizer` and `ui-prompt-optimizer` into the profile in one shot.
 
-| Package | npm | Purpose |
-| --- | --- | --- |
-| `packages/prompt-optimizer` | [@yimiliya/dsh-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer) | Host service: optimization rounds, role library, skill hints, model routing |
-| `packages/api-prompt-optimizer` | [@yimiliya/dsh-api-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-api-prompt-optimizer) | Remote controller and Typert descriptors (host/client shared method table) |
-| `packages/client-ui-prompt-optimizer` | [@yimiliya/dsh-client-ui-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-client-ui-prompt-optimizer) | Browser UI: trigger button, preview panel, queue entries, settings page |
-| `packages/bundle` | [@yimiliya/dsh-prompt-optimizer-bundle](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer-bundle) | Profile bundle (`cordis.patch.yml`) that installs all three plugins in one shot |
-
-Each package carries its own README, which npm renders on the package page; this document is the family-level view. `tools/tsdown.client.ts` is the standalone client build preset: it emits browser closure artifacts against the harness `window.__ModuleLoader__.load({id, factory})` contract, with CSS Modules compiled by lightningcss into self-contained injected styles.
-
-## Installation (users)
-
-Once published to npm, on any profile that has dsh installed:
+### With the `dsh` CLI
 
 ```sh
 dsh plugin --profile web add @yimiliya/dsh-prompt-optimizer-bundle
 ```
 
-The bundle stacks `prompt-optimizer`, `api-prompt-optimizer` and `ui-prompt-optimizer` into that profile's `dsh.profile.bundles`. You can also install it from the web client's plugin marketplace.
+or update:
 
-Before any release exists, install from tarballs. A raw local path or git spec does **not** work: the bundle's `workspace:*` dependencies resolve only inside this repository's pnpm workspace, while `dsh plugin add` installs inside the profile's own root. Packing rewrites those ranges to real versions (`pnpm -r pack`), and the tarball's dependencies then resolve from the registry — so this path needs the other three packages published first:
+```sh
+dsh plugin --profile web update @yimiliya/dsh-prompt-optimizer-bundle@latest
+```
+
+Then start the web UI with `dsh web`. No build, no restart needed.
+
+Before all four packages exist on npm, install from tarballs — a raw local path or git spec does **not** work, because the bundle's `workspace:*` dependencies resolve only inside this repository's pnpm workspace while `dsh plugin add` installs inside the profile's own root. Packing rewrites those ranges to real versions, so this path needs the other three packages published first:
 
 ```sh
 pnpm -r pack        # writes *.tgz next to each package.json
 dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundle-<version>.tgz
 ```
 
-### Configuration (optional — `plugins > config > prompt-optimizer` in cordis.yml)
+## What you get
+
+### Role library — 164 roles, recommended before every rewrite
+
+`<slug>.md` files ship inside the package and are used whenever `rolesDir` is unset: list roles on demand, recommend by draft, re-run with an explicit role, and set a default role in the settings page. **Output language follows the agent UI language** — a Chinese interface yields Chinese prompts, English yields English, while code identifiers, paths and commands stay verbatim.
+
+### Skill awareness — matched installed skills folded into the rewrite
+
+When a draft matches an installed skill, its name and description are folded into the meta-prompt so the output references those skills — guarded by exact-name constraints against hallucination. Chinese and English drafts both match: a built-in bilingual gloss bridges terms like 页面／接口／部署 to English-described skills and back.
+
+### Model-tier awareness + decline-to-optimize
+
+The rewrite conditions on the resolved route's capability tier: reasoning models get scaffolding-free, specification-dense rewrites; small local models behind LiteLLM/vLLM/Ollama get every invariant spelled out. And `skipCheck` keeps the tool honest — a short, clear, generic draft on a reasoning model is **declined with an explanation** instead of rewritten; any explicit rerun still dispatches.
+
+### Multi-candidate comparison — one trigger, differentiated rewrites, one judge
+
+![Multi-candidate panel: labeled candidates with totals, Pareto marks, and the recommended pick](docs/img/candidates.png)
+
+One trigger generates 2–4 differentiated candidate rewrites — every later candidate sees its siblings and must make different trade-offs — then one judge round scores each on faithfulness, completeness, and clarity (0–10). The panel shows labeled candidates with totals, Pareto-optimal marks, and the judge's recommended pick; picking a candidate swaps it into the normal apply/library/evolution flows. A failed judge degrades to unscored candidates instead of failing the round.
+
+### Intent interview — clarify first, rewrite once
+
+![Intent interview: clarifying questions with clickable candidate answers](docs/img/interview.png)
+
+A `?` trigger on the input row asks up to three domain-conditioned clarifying questions with clickable candidates before rewriting. The answers ride into the round as authoritative requirements and survive every rerun — "nothing worth asking" falls straight through to the plain round.
+
+### Prompt library — recurring prompts become assets
+
+![Prompt library panel: browse, expand, insert, re-optimize, delete](docs/img/library.png)
+
+Save any result with one click; the library button on the input row opens a management panel — browse, expand, insert into the draft, re-optimize from a stored entry, or delete with a two-step confirm (newest first).
+
+### Context checkup — a deterministic audit of standing context
+
+![Context checkup report card with findings](docs/img/checkup.png)
+
+One deterministic, no-LLM scan of the session's standing context: the assembled system prompt's sections (per-section sizing, share of the whole, rough token estimate) plus every model-invocable skill the registry lists for the working directory (deep-read bodies, duplicate detection, stale file-reference checks against each skill's directory). It surfaces oversized blocks, near-duplicate sections or skills, and references to files that no longer exist. Opened from the input row, rendered as a report card with findings.
+
+### Context repair — every fixable finding becomes a one-click fix
+
+Every repairable checkup finding has a repair path: stale file references are stripped deterministically (with a nearest-existing-file suggestion), duplicate skills merge over one model round into the first definition (the retired half becomes a labeled tombstone, both originals kept as `.bak`), and duplicate system-prompt sections get an advisory merged replacement to copy by hand. Every write is preview → confirm → rescan.
+
+### Skill evolution — update the skill instead of duplicating it
+
+Once a draft shape is distilled, the next repeat threshold suggests *updating that skill* instead of distilling a fresh one — one evolution round folds the newer round's requirements into the existing definition and overwrites it in place (`.bak` kept).
+
+### Adoption feedback — later rounds reference their prior art
+
+Every applied result is remembered as a same-domain precedent (best 3 per domain, ranked by judge score then recency) and later rounds in that domain reference it as prior art — reference-only, never copied; local-small routes skip the block; the `precedents` config turns storage off.
+
+### Evidence pack — does optimization actually help on this route?
+
+A bundled, domain-interleaved set of fuzzy sample drafts answers "does optimization actually help on this route?" — one click rewrites and judge-scores each sample raw-vs-optimized inside the context-checkup panel; results land in the local-metrics card, and the model-switch staleness note now points at re-running the comparison.
+
+### Acceptance-first mode — pin the observable definition of done
+
+A dedicated trigger runs the goal interview whose first question always pins the observable definition of done; the answer compiles into authoritative `goalCriteria` the rewrite must satisfy and restate, while further answers stay ordinary clarifications.
+
+### Skill distillation — the third rewrite of the same draft becomes a skill
+
+The host fingerprints every completed round (a one-way normalized-draft hash — never content); on the third optimization of the same draft the panel offers to distill it into a durable agent skill. One model round drafts a `SKILL.md` (frontmatter name/description plus a progressive-disclosure body), you review it, and the confirm writes it into the session project's `.dsh/skills` (or a configured `distillDir`), where the harness skill registry picks it up immediately — the recurring prompt becomes a named, invocable asset instead of another rewrite.
+
+### Local metrics + model-switch reminder
+
+Every round's outcome is counted locally — adoption rate, verify pass rate, declines and overrides, interview questions, candidate averages — and rendered on the settings page; rows carry the route and timestamp only, never draft content. Every system-prompt round records the route it was tuned on (per session, local only); when a later round resolves a different model, the preview panel says the standing system prompt was tuned for the old route and suggests re-running the system optimization. Template changes are guarded by a byte-identical golden suite over every meta-prompt, so no rewrite-quality regression ships unnoticed.
+
+![The bundle's package page: the local metrics card populated with real rounds, the three stacked plugins, and the version section](docs/img/settings.png)
+
+## Configuration (optional — `plugins > config > prompt-optimizer` in cordis.yml)
 
 | Field | Default | Description |
 | --- | --- | --- |
@@ -107,6 +158,17 @@ Optimization runs are recorded in the session's own event log; treat drafts acco
 - "Improve this role" rewrites the role definition file `<slug>.md` under the configured `rolesDir` on disk; the previous version is kept alongside it as `<slug>.md.bak`. The bundled default catalog is read-only: configure `rolesDir` to enable role evolution.
 
 If you paste secrets into a draft, expect them to appear in the session log.
+
+## Repository layout
+
+| Package | npm | Purpose |
+| --- | --- | --- |
+| `packages/prompt-optimizer` | [@yimiliya/dsh-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer) | Host service: optimization rounds, role library, skill hints, model routing |
+| `packages/api-prompt-optimizer` | [@yimiliya/dsh-api-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-api-prompt-optimizer) | Remote controller and Typert descriptors (host/client shared method table) |
+| `packages/client-ui-prompt-optimizer` | [@yimiliya/dsh-client-ui-prompt-optimizer](https://www.npmjs.com/package/@yimiliya/dsh-client-ui-prompt-optimizer) | Browser UI: trigger button, preview panel, queue entries, settings page |
+| `packages/bundle` | [@yimiliya/dsh-prompt-optimizer-bundle](https://www.npmjs.com/package/@yimiliya/dsh-prompt-optimizer-bundle) | Profile bundle (`cordis.patch.yml`) that installs all three plugins in one shot |
+
+Each package carries its own README, which npm renders on the package page; this document is the family-level view. `tools/tsdown.client.ts` is the standalone client build preset: it emits browser closure artifacts against the harness `window.__ModuleLoader__.load({id, factory})` contract, with CSS Modules compiled by lightningcss into self-contained injected styles.
 
 ## Development
 
@@ -137,6 +199,10 @@ The supported baseline is `@deepseek-ai/dsh-*` `0.2.1-rc.5`; earlier versions ar
 ## Releasing (maintainers)
 
 Keep the four packages on one version. Tag a release (`git tag vX.Y.Z && git push origin vX.Y.Z`) and GitHub Actions builds, checks and publishes all four packages to npm in dependency order (host → api → client → bundle). See `.github/workflows/release.yml`.
+
+## Like it?
+
+If `dsh-prompt-optimizer` makes your drafts land better, please star the repo on [GitHub](https://github.com/ViewWay/dsh-prompt-optimizer) — issues and PRs are welcome too!
 
 ## License
 
