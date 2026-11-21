@@ -252,6 +252,8 @@ interface PendingContextFix {
   readonly kind: PromptContextFixKind
   /** Finding subject the repair addresses. */
   readonly subject: string
+  /** Finding detail shown in the preview the user is confirming. */
+  readonly detail: string
   /** Full replacement text a confirming call writes. */
   readonly proposal: string
   /** File the confirm rewrites; undefined never pends (advisory proposals do not). */
@@ -1611,7 +1613,7 @@ export default class PromptOptimizer extends Service {
       output,
       durationMs: Date.now() - started,
     }
-    appendPluginRecord(session, 'plugin:prompt-optimizer/verify', { criterion: request.criterion, command, ...verified })
+    appendPluginRecord(session, 'plugin:prompt-optimizer/verify', { criterion: request.criterion, command: redactSecrets(command), ...verified })
     // Verify outcomes are model-independent; the route is best-effort provenance only.
     let verifyRoute = { provider: '', model: '' }
     try {
@@ -2626,7 +2628,7 @@ export default class PromptOptimizer extends Service {
 
     if (request.confirm === true) {
       const pending = this.pendingContextFixes.get(request.sessionId)
-      if (pending === undefined || pending.kind !== request.kind || pending.subject !== request.subject) {
+      if (pending === undefined || pending.kind !== request.kind || pending.subject !== request.subject || pending.detail !== request.detail) {
         fail('PROMPT_OPTIMIZER_CONTEXT_FIX_NOT_PENDING', 'prompt-optimizer: confirm requires a preceding preview of this finding for this session')
       }
       const fs = this.ctx.get('fs')
@@ -2662,7 +2664,8 @@ export default class PromptOptimizer extends Service {
 
     // Preview: the repair can only target a finding a fresh scan still reports.
     const scanned = await this.scanContext(session, request.sessionId, signal)
-    if (!scanned.findings.some(finding => finding.kind === request.kind && finding.subject === request.subject)) {
+    const finding = scanned.findings.find(entry => entry.kind === request.kind && entry.subject === request.subject && entry.detail === request.detail)
+    if (finding === undefined) {
       fail('PROMPT_OPTIMIZER_CONTEXT_FIX_FINDING_GONE', 'prompt-optimizer: a fresh scan no longer reports this finding; rescan the context and pick a current finding')
     }
 
@@ -2689,7 +2692,7 @@ export default class PromptOptimizer extends Service {
       if (targetFile !== undefined) {
         spread.targetFile = targetFile
         this.pendingContextFixes.set(request.sessionId, {
-          kind: request.kind, subject: request.subject, proposal, targetFile, retire: undefined,
+          kind: request.kind, subject: request.subject, detail: request.detail, proposal, targetFile, retire: undefined,
         })
       }
       return { kind: request.kind, subject: request.subject, advisory: targetFile === undefined, proposal, ...spread }
@@ -2733,7 +2736,7 @@ export default class PromptOptimizer extends Service {
         return { kind: request.kind, subject: request.subject, advisory: true, proposal: canonical }
       }
       this.pendingContextFixes.set(request.sessionId, {
-        kind: request.kind, subject: request.subject, proposal: canonical, targetFile: leftTarget,
+        kind: request.kind, subject: request.subject, detail: request.detail, proposal: canonical, targetFile: leftTarget,
         retire: { file: rightTarget, retiredName: right, mergeInto: left },
       })
       return { kind: request.kind, subject: request.subject, advisory: false, proposal: canonical, targetFile: leftTarget }

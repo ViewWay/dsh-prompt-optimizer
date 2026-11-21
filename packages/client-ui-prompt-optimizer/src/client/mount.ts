@@ -118,6 +118,8 @@ function resultOfCandidatesRound(round: PromptCandidatesResult, draft: string): 
       model: round.model,
       ...(round.tier !== undefined ? { tier: round.tier } : {}),
       ...(round.skills !== undefined && round.skills.length > 0 ? { skills: round.skills } : {}),
+      ...(round.suggestDistill !== undefined ? { suggestDistill: round.suggestDistill } : {}),
+      ...(round.suggestEvolve !== undefined ? { suggestEvolve: round.suggestEvolve } : {}),
       ...(round.systemPromptStale !== undefined ? { systemPromptStale: round.systemPromptStale } : {}),
     },
     selected: index,
@@ -241,7 +243,7 @@ function registerUi(ctx: Context): void {
           }
         })
       } catch (failure) {
-        if (controller.signal.aborted && rounds.get(sessionId)?.controller === controller) return
+        if (controller.signal.aborted || rounds.get(sessionId)?.controller !== controller) return
         const message = failure instanceof Error ? failure.message : String(failure)
         store.update((draft) => {
           draft[sessionId] = {
@@ -311,7 +313,7 @@ function registerUi(ctx: Context): void {
           }
         })
       } catch (failure) {
-        if (controller.signal.aborted && rounds.get(sessionId)?.controller === controller) return
+        if (controller.signal.aborted || rounds.get(sessionId)?.controller !== controller) return
         const message = failure instanceof Error ? failure.message : String(failure)
         store.update((draft) => {
           draft[sessionId] = {
@@ -345,7 +347,7 @@ function registerUi(ctx: Context): void {
         direction: base.direction,
         ...(base.queueItemId !== undefined ? { queueItemId: base.queueItemId } : {}),
         ...(mode === 'goal' ? { interviewMode: 'goal' } : {}),
-        questions: undefined, answers: {}, goalCriteria: undefined,
+        questions: undefined, answers: {}, goalCriteria: base.goalCriteria,
         result: undefined, error: undefined, apply: base.apply,
       }
     })
@@ -366,7 +368,7 @@ function registerUi(ctx: Context): void {
           draft[sessionId] = { ...draft[sessionId]!, questions: result.value.questions, answers: {} }
         })
       } catch (failure) {
-        if (controller.signal.aborted && rounds.get(sessionId)?.controller === controller) return
+        if (controller.signal.aborted || rounds.get(sessionId)?.controller !== controller) return
         const message = failure instanceof Error ? failure.message : String(failure)
         store.update((draft) => {
           draft[sessionId] = {
@@ -539,7 +541,9 @@ function registerUi(ctx: Context): void {
             model: prior.model,
             ...(prior.tier !== undefined ? { tier: prior.tier } : {}),
             ...(prior.skills !== undefined && prior.skills.length > 0 ? { skills: prior.skills } : {}),
-        ...(prior.systemPromptStale !== undefined ? { systemPromptStale: prior.systemPromptStale } : {}),
+            ...(prior.suggestDistill !== undefined ? { suggestDistill: prior.suggestDistill } : {}),
+            ...(prior.suggestEvolve !== undefined ? { suggestEvolve: prior.suggestEvolve } : {}),
+            ...(prior.systemPromptStale !== undefined ? { systemPromptStale: prior.systemPromptStale } : {}),
           },
         }
       })
@@ -565,8 +569,8 @@ function registerUi(ctx: Context): void {
       if (state === undefined || (state.queueItemId === undefined && state.apply === undefined)) return
       runInterview(sessionId, {
         draft: state.draft, previousAttempts: state.previousAttempts, apply: state.apply ?? (() => {}), target: 'draft',
-        role: state.role, direction: state.direction, force: false, queueItemId: state.queueItemId,
-      })
+        role: state.role, direction: state.direction, force: false, goalCriteria: state.goalCriteria, queueItemId: state.queueItemId,
+      }, state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? 'goal' : undefined)
     },
     answerInterview: (sessionId: SessionId, index: number, value: string): void => {
       const state = store.getSnapshot()[sessionId]
@@ -587,8 +591,10 @@ function registerUi(ctx: Context): void {
       // A goal interview's first question is the acceptance question: its answer
       // compiles into authoritative criteria; the remaining answers stay clarifications.
       const goal = state.interviewMode === 'goal'
-      const goalCriteria = goal && pairs.length > 0
-        ? [...new Set(pairs[0]!.answer.split(/[\n；;]/).map(line => line.trim()).filter(line => line !== ''))].slice(0, 4)
+      const goalCriteria = goal
+        ? pairs.length > 0
+          ? [...new Set(pairs[0]!.answer.split(/[\n；;]/).map(line => line.trim()).filter(line => line !== ''))].slice(0, 4)
+          : state.goalCriteria
         : undefined
       const clarifications: PromptClarification[] = goal ? pairs.slice(1) : pairs
       // An interviewed draft always deserves the rewrite: force past the decline precheck.
@@ -606,7 +612,7 @@ function registerUi(ctx: Context): void {
       if (state.queueItemId === undefined && state.apply === undefined) return
       runRound(sessionId, {
         draft: state.draft, previousAttempts: state.previousAttempts, apply: state.apply ?? (() => {}), target: 'draft',
-        role: state.role, direction: state.direction, force: false, queueItemId: state.queueItemId,
+        role: state.role, direction: state.direction, force: false, goalCriteria: state.goalCriteria, queueItemId: state.queueItemId,
       })
     },
     openLibrary: (sessionId: SessionId, insert: (text: string) => void): void => {

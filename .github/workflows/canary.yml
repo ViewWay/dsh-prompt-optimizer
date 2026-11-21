@@ -41,9 +41,15 @@ jobs:
       - name: Resolve the harness version under test
         id: ver
         shell: bash
+        env:
+          DSH_VERSION_INPUT: ${{ inputs.dsh-version }}
         run: |
-          V='${{ inputs.dsh-version }}'
+          V="$DSH_VERSION_INPUT"
           if [ -z "$V" ]; then V="$(npm view @deepseek-ai/dsh dist-tags.latest)"; fi
+          if [[ ! "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::invalid dsh version: expected a semantic version"
+            exit 1
+          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "testing dsh $V"
 
@@ -52,13 +58,15 @@ jobs:
       - name: Check the harness git tag exists
         id: tag
         shell: bash
+        env:
+          DSH_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           if git ls-remote --tags https://github.com/deepseek-ai/deepseek-harness.git \
-            "refs/tags/dsh-v${{ steps.ver.outputs.version }}" | grep -q .; then
+            "refs/tags/dsh-v$DSH_VERSION" | grep -q .; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no git tag dsh-v${{ steps.ver.outputs.version }} on deepseek-ai/deepseek-harness; skipping this run"
+            echo "::notice::no git tag dsh-v$DSH_VERSION on deepseek-ai/deepseek-harness; skipping this run"
           fi
 
       - name: Install dependencies
@@ -68,9 +76,11 @@ jobs:
       - name: Fetch the dsh harness sources
         if: steps.tag.outputs.exists == 'true'
         shell: bash
+        env:
+          DSH_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           mkdir -p .tmp
-          git clone --depth 1 --branch "dsh-v${{ steps.ver.outputs.version }}" \
+          git clone --depth 1 --branch "dsh-v$DSH_VERSION" \
             https://github.com/deepseek-ai/deepseek-harness.git .tmp/dsh-harness
 
       - name: Install harness dependencies
@@ -87,12 +97,15 @@ jobs:
         if: failure() && steps.tag.outputs.exists == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          DSH_VERSION: ${{ steps.ver.outputs.version }}
+          CANARY_SERVER_URL: ${{ github.server_url }}
+          CANARY_REPOSITORY: ${{ github.repository }}
+          CANARY_RUN_ID: ${{ github.run_id }}
         run: |
-          TITLE="Canary failed against dsh ${{ steps.ver.outputs.version }}"
-          if gh issue list --state open --json title \
-            --jq '.[] | select(.title == "'""$TITLE""'"") | .number' | grep -q .; then
+          TITLE="Canary failed against dsh $DSH_VERSION"
+          if gh issue list --state open --json title | jq -e --arg title "$TITLE" 'any(.[]; .title == $title)' >/dev/null; then
             echo "An open issue already tracks this failure."
           else
             gh issue create --title "$TITLE" \
-              --body "The weekly canary run of the full gate failed against harness tag dsh-v${{ steps.ver.outputs.version }}. Log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. Next: adapt the baseline (docs/compatibility.md, peer/dev pins, workflow clone tags) or move engines.dsh if the range needs to change."
+              --body "The weekly canary run of the full gate failed against harness tag dsh-v$DSH_VERSION. Log: $CANARY_SERVER_URL/$CANARY_REPOSITORY/actions/runs/$CANARY_RUN_ID. Next: adapt the baseline (docs/compatibility.md, peer/dev pins, workflow clone tags) or move engines.dsh if the range needs to change."
           fi

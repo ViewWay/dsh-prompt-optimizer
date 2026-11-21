@@ -42,6 +42,13 @@ const RESULT = {
   usage: undefined,
 } as const
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
+
 interface Published {
   readonly interaction: { key: string; kind: string; sessionId: SessionId }
   readonly delegate: () => Promise<void>
@@ -118,6 +125,7 @@ type MountedActions = {
   regenerateAsRole: (sessionId: SessionId, role: string | undefined) => void
   regenerateCandidates: (sessionId: SessionId) => void
   selectCandidate: (sessionId: SessionId, index: number) => void
+  reInterview: (sessionId: SessionId) => void
   distillSkill: (sessionId: SessionId, draft: string, optimized: string, clarifications?: readonly { question: string; answer: string }[], confirm?: boolean) => Promise<unknown>
   startInterview: (sessionId: SessionId, text: string, apply: (text: string) => void, role?: string) => void
   answerInterview: (sessionId: SessionId, index: number, value: string) => void
@@ -261,6 +269,52 @@ it('accumulates rejected results into the next round and cancels cleanly', async
     actions.cancel(SESSION)
     expect(b.published).toHaveLength(0)
     expect(stateOf(b.ctx)).toBeUndefined()
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('keeps a dismissed session cleared when its in-flight request rejects after cancel', async () => {
+  const pending = deferred<unknown>()
+  const optimize = vi.fn((_request: unknown, signal: AbortSignal) => {
+    signal.addEventListener('abort', () => { pending.reject(signal.reason) }, { once: true })
+    return pending.promise
+  })
+  const b = await fixture(optimize)
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx)
+    actions.start(SESSION, 'draft', () => {})
+    await vi.waitFor(() => { expect(optimize).toHaveBeenCalledOnce() })
+
+    actions.cancel(SESSION)
+    await pending.promise.catch(() => undefined)
+    expect(stateOf(b.ctx)).toBeUndefined()
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
+it('does not let a superseded request overwrite the newer running round', async () => {
+  const first = deferred<unknown>(), second = deferred<unknown>()
+  let calls = 0
+  const optimize = vi.fn((_request: unknown, signal: AbortSignal) => {
+    const pending = calls++ === 0 ? first : second
+    signal.addEventListener('abort', () => { pending.reject(signal.reason) }, { once: true })
+    return pending.promise
+  })
+  const b = await fixture(optimize)
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx)
+    actions.start(SESSION, 'old draft', () => {})
+    actions.start(SESSION, 'new draft', () => {})
+    await vi.waitFor(() => { expect(optimize).toHaveBeenCalledTimes(2) })
+
+    await first.promise.catch(() => undefined)
+    expect(stateOf(b.ctx)).toMatchObject({ phase: 'running', draft: 'new draft' })
+    second.resolve({ ok: true as const, value: { ...RESULT, optimizedText: 'new result' } })
+    await vi.waitFor(() => { expect(stateOf(b.ctx)).toMatchObject({ phase: 'ready', draft: 'new draft' }) })
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }
 })
@@ -423,6 +477,18 @@ it('runs the acceptance-first interview: mode goal rides in, the first answer co
       clarifications: [{ question: '目标芯片型号？', answer: 'STM32F103' }],
     }), expect.any(AbortSignal))
     await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+
+    actions.reInterview(SESSION)
+    await vi.waitFor(() => { expect(interview).toHaveBeenCalledTimes(2) })
+    expect(interview).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId: SESSION, mode: 'goal' }), expect.any(AbortSignal),
+    )
+    actions.submitInterview(SESSION)
+    await vi.waitFor(() => { expect(optimize).toHaveBeenCalledTimes(2) })
+    expect(optimize).toHaveBeenLastCalledWith(expect.objectContaining({
+      goalCriteria: ['脚本零退出', '输出两列数据'],
+    }), expect.any(AbortSignal))
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }
 })
@@ -540,6 +606,8 @@ it('runs a candidates round, reports the discarded result, and switches the pick
     recommended: 1,
     provider: 'current-route',
     model: 'current-model',
+    suggestDistill: true,
+    suggestEvolve: { name: 'existing-skill' },
   }
   const optimizeCandidates = vi.fn(async () => ({ ok: true as const, value: CANDIDATES }))
   const reportMetric = vi.fn(async () => ({ ok: true as const, value: undefined }))
@@ -564,10 +632,14 @@ it('runs a candidates round, reports the discarded result, and switches the pick
     await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
     expect(stateOf(b.ctx)?.result?.optimizedText).toBe('候选乙')
     expect(stateOf(b.ctx)?.selectedCandidate).toBe(1)
+    expect(stateOf(b.ctx)?.result?.suggestDistill).toBe(true)
+    expect(stateOf(b.ctx)?.result?.suggestEvolve).toEqual({ name: 'existing-skill' })
 
     actions.selectCandidate(SESSION, 0)
     expect(stateOf(b.ctx)?.result?.optimizedText).toBe('候选甲')
     expect(stateOf(b.ctx)?.selectedCandidate).toBe(0)
+    expect(stateOf(b.ctx)?.result?.suggestDistill).toBe(true)
+    expect(stateOf(b.ctx)?.result?.suggestEvolve).toEqual({ name: 'existing-skill' })
 
     actions.apply(SESSION)
     expect(applied).toEqual(['候选甲'])

@@ -657,6 +657,20 @@ describe('PromptOptimizer.verify', () => {
     expect(record?.output).toBe(result.output)
   })
 
+  it('redacts credential-shaped secrets from the logged command', async () => {
+    const token = 'sk-AbCdEf0123456789AbCdEf'
+    const { ctx, sessionId } = await withShell(0, 'ok')
+
+    const result = await ctx.promptOptimizer.verify(
+      { sessionId, criterion: '回显检查', command: `echo ${token}` }, new AbortController().signal,
+    )
+
+    expect(result.output).toContain('$ echo [REDACTED]')
+    const record = verifyRecords(ctx.sessions.get(sessionId)!.snapshotEvents())[0]
+    expect(record?.command).toBe('echo [REDACTED]')
+    expect(JSON.stringify(record)).not.toContain(token)
+  })
+
   it('fails typed without a composed shell executor', async () => {
     const ctx = new Context()
     onTestFinished(() => ctx.fiber.dispose())

@@ -57,6 +57,9 @@ function checkWorkflowTag(baseline, file) {
   if (tags === 0) {
     problems.push(`${rel(file)}: no "clone --branch dsh-v<baseline>" tag found`);
   }
+  if (!lines.some((line) => /^\s*run:\s*pnpm run baseline\s*$/.test(line))) {
+    problems.push(`${rel(file)}: missing "pnpm run baseline" gate`);
+  }
   return tags;
 }
 

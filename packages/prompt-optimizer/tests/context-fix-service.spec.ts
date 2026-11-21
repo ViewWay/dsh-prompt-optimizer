@@ -179,6 +179,31 @@ describe('PromptOptimizer.contextFix stale references', () => {
     expect(events).toEqual([{ kind: 'stale-skill-reference', subject: 'ref-skill', bytes: Buffer.byteLength(STRIPPED_BODY, 'utf8') }])
   })
 
+  it('rejects a forged stale-reference detail and binds confirmation to the preview', async () => {
+    const { ctx, sessionId, writes } = await withFixContext({
+      skills: [{ name: 'ref-skill', base: '/proj/root/.dsh/skills/ref-skill', body: STALE_BODY, files: ['guide.md'] }],
+    })
+    const scan = await ctx.promptOptimizer.contextCheck({ sessionId }, new AbortController().signal)
+    const finding = scan.findings.find(entry => entry.kind === 'stale-skill-reference')!
+    const forgedDetail = finding.detail.replace('guilde.md', 'guide.md')
+
+    await expect(ctx.promptOptimizer.contextFix(
+      { sessionId, kind: finding.kind, subject: finding.subject, detail: forgedDetail },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_CONTEXT_FIX_FINDING_GONE' })
+    expect(writes).toEqual([])
+
+    await ctx.promptOptimizer.contextFix(
+      { sessionId, kind: finding.kind, subject: finding.subject, detail: finding.detail },
+      new AbortController().signal,
+    )
+    await expect(ctx.promptOptimizer.contextFix(
+      { sessionId, kind: finding.kind, subject: finding.subject, detail: forgedDetail, confirm: true },
+      new AbortController().signal,
+    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_CONTEXT_FIX_NOT_PENDING' })
+    expect(writes).toEqual([])
+  })
+
   it('degrades to an advisory proposal when the skill sits outside the writable root', async () => {
     const { ctx, sessionId, writes } = await withFixContext({
       skills: [{ name: 'packaged-skill', base: '/packaged/skill-x', body: STALE_BODY, files: [] }],
