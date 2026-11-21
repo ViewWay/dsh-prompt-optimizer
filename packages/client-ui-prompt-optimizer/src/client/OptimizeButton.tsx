@@ -1,7 +1,7 @@
 /** Compact composer trigger: starts one optimization round for the draft. */
 import { useEffect, useMemo, useState } from 'react'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { Button, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconQuestionOutlineRegular, IconThinkOutlineRegular, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconArchiveOutlineRegular, IconCheckOutlineRegular, IconChecklistOutlineRegular, IconQuestionOutlineRegular, IconThinkOutlineRegular, StateDot, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   PromptRoleRecommendation,
@@ -66,6 +66,18 @@ export interface OptimizeButtonActions {
    * @param role - optional role slug styling the eventual round.
    */
   startInterviewQueued: (sessionId: SessionId, itemId: QueueItemId, text: string, role?: string) => void
+  /** Run the acceptance-first interview on the current draft: the first question pins the definition of done.
+   * @param sessionId - Session owning the draft.
+   * @param text - complete current draft text.
+   * @param apply - draft replacement registered by this triggering entry.
+   */
+  startGoalInterview: (sessionId: SessionId, text: string, apply: (text: string) => void) => void
+  /** Run the acceptance-first interview on one pending queue item.
+   * @param sessionId - Session owning the pending item.
+   * @param itemId - pending inbox occurrence identity.
+   * @param text - complete queued message text.
+   */
+  startGoalInterviewQueued: (sessionId: SessionId, itemId: QueueItemId, text: string) => void
   /** List the host's selectable role definitions; a failing or empty listing hides the recommendation chips. */
   loadRoles: () => Promise<readonly PromptRoleSummary[]>
   /** Rank roles for the draft plus pending inbox context; a failing call hides the chips. */
@@ -88,7 +100,7 @@ export type OptimizeButtonProps =
 
 /** Render the toolbar trigger; the preview panel owns everything after the click. */
 export function OptimizeButton(
-  { sessionId, useInput, inputActions, start, startQueued, startInterview, startInterviewQueued, loadRoles, recommendRoles, openLibrary, openContext, useOptimization, t }: OptimizeButtonProps,
+  { sessionId, useInput, inputActions, start, startQueued, startInterview, startInterviewQueued, startGoalInterview, startGoalInterviewQueued, loadRoles, recommendRoles, openLibrary, openContext, useOptimization, t }: OptimizeButtonProps,
 ) {
   const draft = useInput(input => input.draft)
   const rawQueue = useInput(input => input.queue)
@@ -144,6 +156,16 @@ export function OptimizeButton(
     if (item !== undefined) startInterviewQueued(sessionId, item.id, item.text)
   }
 
+  const goalInterviewWith = (): void => {
+    if (disabled) return
+    if (draftReady) {
+      startGoalInterview(sessionId, draft, (text) => { inputActions.setDraft(text) })
+      return
+    }
+    const item = queued[0]
+    if (item !== undefined) startGoalInterviewQueued(sessionId, item.id, item.text)
+  }
+
   return (
     <Tooltip label={t(busy ? 'optimizing' : draftReady || queueReady ? 'optimize' : 'optimizeDisabled')} side="top" portal>
       <span className={css.triggerAnchor}>
@@ -182,6 +204,14 @@ export function OptimizeButton(
             onClick={() => { interviewWith() }}
           >
             <IconQuestionOutlineRegular size={18} />
+          </Button>
+        </Tooltip>
+        <Tooltip label={t('goalInterview')} side="top" portal>
+          <Button
+            className={css.trigger} size="sm" disabled={disabled} aria-label={t('goalInterview')} data-testid="start-goal-interview"
+            onClick={() => { goalInterviewWith() }}
+          >
+            <IconChecklistOutlineRegular size={18} />
           </Button>
         </Tooltip>
         <Button className={css.trigger} size="sm" disabled={disabled} aria-label={t('optimize')} onClick={() => { startWith() }}>

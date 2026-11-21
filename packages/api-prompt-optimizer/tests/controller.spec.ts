@@ -3,6 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { PromptOptimizeResult } from '@yimiliya/dsh-prompt-optimizer/types'
 import PromptOptimizerController from '../src/index.ts'
+import { TYPERT_REMOTE } from '../src/generated/typert.remote-client.ts'
 
 const roots: Context[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => root.fiber.dispose())) })
@@ -83,6 +84,8 @@ it('wraps an interview failure as the typed Remote error', async () => {
 const METRICS_SUMMARY = {
   adopted: 1, rejected: 0, declined: 0, declineOverridden: 0,
   interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
+  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null, distills: 0,
+  evolutions: 0, evalRuns: 0, evalWins: 0,
   adoptionRate: 1, verifyPassRate: null, rows: 1,
 }
 
@@ -322,4 +325,85 @@ it('wraps a context checkup failure as the typed Remote error', async () => {
 
   await expect(api.contextCheck({ sessionId: 'session-1' as never }, new AbortController().signal))
     .rejects.toMatchObject({ code: 'prompt-optimizer/context-failed', details: { reason: 'skills unreadable' } })
+})
+
+const CONTEXT_FIX_RESULT = {
+  kind: 'stale-skill-reference',
+  subject: 'ref-skill',
+  advisory: false,
+  proposal: '---\nname: ref-skill\n---\n…',
+  targetFile: '/proj/root/.dsh/skills/ref-skill/SKILL.md',
+}
+
+it('forwards a context repair request to the capability service unchanged', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const contextFix = vi.fn(async () => CONTEXT_FIX_RESULT)
+  ctx.provide('promptOptimizer', { contextFix } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = {
+    sessionId: 'session-1' as never,
+    kind: 'stale-skill-reference' as const,
+    subject: 'ref-skill',
+    detail: 'references "gone.md", which does not exist in the skill directory',
+  }
+
+  await expect(api.contextFix(request, new AbortController().signal)).resolves.toEqual(CONTEXT_FIX_RESULT)
+  expect(contextFix).toHaveBeenCalledExactlyOnceWith(request, expect.any(AbortSignal))
+})
+
+it('wraps a context repair failure as the typed Remote error', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  ctx.provide('promptOptimizer', { contextFix: vi.fn(async () => { throw new Error('finding gone') }) } as never)
+  const api = new PromptOptimizerController(ctx)
+
+  await expect(api.contextFix(
+    { sessionId: 'session-1' as never, kind: 'duplicate-skill', subject: 'a ≈ b', detail: 'd' }, new AbortController().signal,
+  )).rejects.toMatchObject({ code: 'prompt-optimizer/context-fix-failed', details: { reason: 'finding gone' } })
+})
+
+it('the vendored listMetrics codec round-trips every summary field the wire type carries', () => {
+  const full = {
+    ...METRICS_SUMMARY,
+    candidatesRounds: 2,
+    judgedRounds: 2,
+    distills: 1,
+    evolutions: 1,
+    evalRuns: 1,
+    evalWins: 2,
+    judgeAverage: 25.5,
+  }
+  const codec = TYPERT_REMOTE.methods['promptOptimizer/listMetrics']!.result.create
+  expect(codec().parse(full)).toEqual(full)
+})
+
+const EVAL_RESULT = {
+  samples: [{ id: 'embedded-uart', domain: 'embedded', rawTotal: 18, optimizedTotal: 24, improved: true }],
+  improved: 1,
+  judged: 1,
+  provider: 'current-route',
+  model: 'current-model',
+}
+
+it('forwards an evidence-pack run to the capability service unchanged', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  const runEvalPack = vi.fn(async () => EVAL_RESULT)
+  ctx.provide('promptOptimizer', { runEvalPack } as never)
+  const api = new PromptOptimizerController(ctx)
+  const request = { sessionId: 'session-1' as never, count: 1 }
+
+  await expect(api.runEvalPack(request, new AbortController().signal)).resolves.toEqual(EVAL_RESULT)
+  expect(runEvalPack).toHaveBeenCalledExactlyOnceWith(request, expect.any(AbortSignal))
+})
+
+it('wraps an evidence-pack failure as the typed Remote error', async () => {
+  const ctx = new Context()
+  roots.push(ctx)
+  ctx.provide('promptOptimizer', { runEvalPack: vi.fn(async () => { throw new Error('no route') }) } as never)
+  const api = new PromptOptimizerController(ctx)
+
+  await expect(api.runEvalPack({ sessionId: 'session-1' as never }, new AbortController().signal))
+    .rejects.toMatchObject({ code: 'prompt-optimizer/eval-failed', details: { reason: 'no route' } })
 })

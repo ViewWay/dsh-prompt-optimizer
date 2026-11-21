@@ -122,6 +122,21 @@ const DOMAIN_PRIORS: readonly DomainPrior[] = [
 ]
 
 /**
+ * Detect the draft's strongest-matching technical domain id.
+ * Deterministic: the same draft text always yields the same id.
+ * @param text - complete draft text to classify.
+ * @returns the highest keyword-hit domain's stable id, or undefined for a generic draft.
+ */
+export function detectDomainId(text: string): string | undefined {
+  const haystack = text.toLowerCase()
+  const matched = DOMAIN_PRIORS
+    .map(prior => ({ prior, hits: prior.keywords.reduce((sum, keyword) => sum + (haystack.includes(keyword) ? 1 : 0), 0) }))
+    .filter(entry => entry.hits > 0)
+    .sort((left, right) => right.hits - left.hits || left.prior.id.localeCompare(right.prior.id))[0]
+  return matched?.prior.id
+}
+
+/**
  * Detect the draft's technical domains and collect their guidance lines,
  * highest keyword-hit domain first, at most {@link MAX_PRIOR_DOMAINS} domains.
  * Deterministic: the same draft text always yields the same lines.
@@ -192,6 +207,8 @@ export interface RoundConditioning {
   readonly tier?: ModelTier
   /** Interview answers the rewrite must fold in as first-class requirements. */
   readonly clarifications?: readonly PromptClarification[]
+  /** Acceptance criteria the user defined up front; the rewrite must satisfy and restate every one. */
+  readonly goalCriteria?: readonly string[]
   /** Direction the rewrite should push toward; absent applies the plain rules. */
   readonly direction?: PromptOptimizeDirection
 }
@@ -204,6 +221,16 @@ function clarificationBlock(clarifications: readonly PromptClarification[]): rea
     'The user already answered clarifying questions about this draft. Their answers are authoritative requirements:',
     '- Fold each answer into the rewrite at the place it belongs (constraints, inputs, success criteria), not as a Q&A appendix.',
     '- Never contradict, soften, or drop an answer; when an answer conflicts with the draft, the answer wins.',
+  ]
+}
+
+/** Goal-criteria block appended to a system prompt when the user defined done up front. */
+function goalCriteriaBlock(criteria: readonly string[]): readonly string[] {
+  if (criteria.length === 0) return []
+  return [
+    '',
+    'The user defined done up front. These acceptance criteria are authoritative — build the rewrite to satisfy them, and restate every one of them in the rewrite\'s own acceptance list (appending a runnable check command in backticks where one plausibly exists):',
+    ...criteria.map(criterion => `- ${criterion}`),
   ]
 }
 
@@ -313,7 +340,7 @@ function writtenIn(language: string | undefined): string {
  * @returns exact system prompt text for every optimization round.
  */
 export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [] } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [], goalCriteria } = conditioning
   return [
     'You are a prompt optimization specialist. The user gives you a draft prompt they intend to send to a coding agent. Rewrite the draft into a clear, well-structured prompt.',
     '',
@@ -331,6 +358,7 @@ export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): str
     ...priorBlock(domainPriors),
     ...(tier === undefined ? [] : modelTierBlock(tier)),
     ...clarificationBlock(clarifications),
+    ...goalCriteriaBlock(goalCriteria ?? []),
     ...(role === undefined ? [] : roleBlock(role, DRAFT_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),
@@ -347,7 +375,7 @@ export function optimizerSystemPrompt(conditioning: RoundConditioning = {}): str
  * @returns exact system prompt text for a system-target rewrite round.
  */
 export function optimizerSystemPromptForSystem(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [] } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [], goalCriteria } = conditioning
   return [
     'You are a prompt optimization specialist. The user gives you a draft SYSTEM prompt: the standing instruction block that governs a coding agent across a whole session, not a single chat message. Rewrite the draft into a clear, well-structured system prompt.',
     '',
@@ -365,6 +393,7 @@ export function optimizerSystemPromptForSystem(conditioning: RoundConditioning =
     ...priorBlock(domainPriors),
     ...(tier === undefined ? [] : modelTierBlock(tier)),
     ...clarificationBlock(clarifications),
+    ...goalCriteriaBlock(goalCriteria ?? []),
     ...(role === undefined ? [] : roleBlock(role, SYSTEM_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),
@@ -379,7 +408,7 @@ export function optimizerSystemPromptForSystem(conditioning: RoundConditioning =
  * @returns exact system prompt text for the critique round.
  */
 export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): string {
-  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [] } = conditioning
+  const { domainPriors = [], role, skills = [], language, direction, tier, clarifications = [], goalCriteria } = conditioning
   return [
     'You are a prompt optimization specialist performing a critique round on a rewritten SYSTEM prompt. You receive the original draft and the first rewrite. Audit the rewrite, then output an improved full revision.',
     '',
@@ -400,6 +429,7 @@ export function critiqueSystemPrompt(conditioning: RoundConditioning = {}): stri
     ...priorBlock(domainPriors),
     ...(tier === undefined ? [] : modelTierBlock(tier)),
     ...clarificationBlock(clarifications),
+    ...goalCriteriaBlock(goalCriteria ?? []),
     ...(role === undefined ? [] : roleBlock(role, SYSTEM_ROLE_INSTRUCTION)),
     ...skillBlock(skills),
     ...(direction === undefined ? [] : directionBlock(direction)),
@@ -427,6 +457,38 @@ export function interviewSystemPrompt(conditioning: RoundConditioning = {}): str
     '2. Never answer the prompt, never perform the task, never evaluate the draft — only ask.',
     `3. Ask ${String(MAX_QUESTIONS)} or fewer questions. Ask none when the draft already pins down goal, inputs, and success — an empty answer is correct for a complete draft.`,
     '4. Each question must be answerable by the user in one click or one short sentence: a missing constraint (version, scope, environment), an unstated input or output, the observable definition of done, or an ignored edge case.',
+    '5. Never ask about anything the draft already states; never offer an option the draft contradicts.',
+    `6. Under each question, list at most ${String(MAX_OPTIONS)} short concrete candidate answers as bullets the user can pick verbatim. When candidates cannot be enumerated, list exactly '${FREE_TEXT_OPTION}' instead.`,
+    ...priorBlock(domainPriors),
+    '',
+    'Respond with exactly this format and nothing else:',
+    QUESTIONS_MARKER,
+    'Q: (question text)',
+    '- (candidate answer 1)',
+    '- (candidate answer 2)',
+    'Q: (another question)',
+    `- ${FREE_TEXT_OPTION}`,
+  ].join('\n')
+}
+
+/**
+ * The goal-mode interviewer system prompt: the acceptance-first variant of
+ * {@link interviewSystemPrompt}. The first question is always the observable
+ * definition of done; the remaining rules match the plain interview.
+ * @param conditioning - round conditioners; priors surface as questions, the
+ * language pins the questions' language.
+ * @returns exact system prompt text for one acceptance-first interview round.
+ */
+export function goalInterviewSystemPrompt(conditioning: RoundConditioning = {}): string {
+  const { domainPriors = [], language } = conditioning
+  return [
+    'You are an acceptance-first intent clarification specialist. The user gives you a draft prompt they intend to send to a coding agent. Interview the user: the first question always pins down what "done" observably means.',
+    '',
+    'Rules:',
+    languageRule(language),
+    '2. Never answer the prompt, never perform the task, never evaluate the draft — only ask.',
+    `3. The FIRST question is always the acceptance question: what observable outcome proves this task is done — a command that exits 0, an output shape, a measurable threshold, a human judgment point. Offer at most ${String(MAX_OPTIONS)} concrete candidate answers a user can pick verbatim.`,
+    `4. After the acceptance question, ask at most ${String(MAX_QUESTIONS - 1)} further questions whose answers would most change the rewrite. Ask none when the draft already pins them.`,
     '5. Never ask about anything the draft already states; never offer an option the draft contradicts.',
     `6. Under each question, list at most ${String(MAX_OPTIONS)} short concrete candidate answers as bullets the user can pick verbatim. When candidates cannot be enumerated, list exactly '${FREE_TEXT_OPTION}' instead.`,
     ...priorBlock(domainPriors),
@@ -502,6 +564,7 @@ export function candidateUserInput(
   text: string,
   clarifications: readonly PromptClarification[],
   siblings: readonly { readonly label: string; readonly text: string }[],
+  precedent: string | undefined = undefined,
 ): string {
   const earlier = siblings.map(sibling => `--- sibling candidate ${sibling.label} ---\n${sibling.text}`).join('\n\n')
   const answers = clarifications.map(pair => `Q: ${pair.question}\nA: ${pair.answer}`).join('\n\n')
@@ -512,6 +575,9 @@ export function candidateUserInput(
     clarifications.length === 0
       ? ''
       : `The user answered these clarifying questions; each answer is an authoritative requirement of the rewrite:\n\n${answers}\n`,
+    precedent === undefined
+      ? ''
+      : `A previously adopted rewrite of a similar draft in this domain (reference only — never copy verbatim; the draft's own facts and the user's answers always win):\n\n${precedent}\n`,
     'Optimize the following draft prompt:',
     '',
     text,
@@ -706,7 +772,7 @@ export interface ParsedSkillDefinition {
 }
 
 /** Kebab-case skill-name grammar mirrored from the harness skill registry. */
-const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+export const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 /** Longest description line accepted from produced frontmatter. */
 const SKILL_DESCRIPTION_MAX_CHARS = 200
 
@@ -742,6 +808,146 @@ export function parseSkillDefinition(response: string): ParsedSkillDefinition {
     throw new Error(`the skill definition needs a one-line \`description:\` frontmatter value of at most ${String(SKILL_DESCRIPTION_MAX_CHARS)} characters`)
   }
   return { name, description, definition: fenced.trim() }
+}
+
+/**
+ * The skill-merge system prompt: fuse two near-duplicate agent skill files
+ * into one definition that keeps every distinct requirement either file
+ * pinned, so the merged skill replaces the pair without losing a constraint.
+ * @returns exact system prompt text for one skill-merge round.
+ */
+export function skillMergeSystemPrompt(): string {
+  return [
+    'You are a skill definition merger. The user gives you two agent skill files that largely repeat each other. Produce one merged skill file that replaces the pair.',
+    '',
+    'Rules:',
+    '1. Output only the merged skill file: YAML frontmatter, then the markdown body. No preamble, no closing remarks, no code fences around the whole file.',
+    '2. Keep the first definition\'s `name:` value verbatim; its `description:` may widen to cover what the second file added, still one line within the same length cap.',
+    '3. Merge by union: every requirement, input, constraint, and success criterion either file pinned appears exactly once in the merged body. Never drop, soften, or invent requirements.',
+    '4. Where the two files phrase the same requirement differently, keep the more specific phrasing.',
+    '5. Keep the merged body under 120 lines and one reference level deep, mirroring a well-formed skill file.',
+    '6. Write the body in the language the two definitions are written in; keep the `name` value and code identifiers in their original form.',
+  ].join('\n')
+}
+
+/**
+ * Frame the two near-duplicate skill definitions as the merge round's user input.
+ * @param left - complete first definition text (the one the merge keeps the name of).
+ * @param right - complete second definition text.
+ * @returns exact user input for the merge round.
+ */
+export function skillMergeUserInput(left: string, right: string): string {
+  return [
+    'Merge the two near-duplicate skill files below into one definition that replaces the pair.',
+    '',
+    '--- first definition (keeps its name) ---',
+    left,
+    '',
+    '--- second definition ---',
+    right,
+    '',
+    'Output only the merged skill file in the required format.',
+  ].join('\n')
+}
+
+/**
+ * The skill-evolution system prompt: update one existing distilled skill from
+ * a newer completed round of the same prompt shape — keep every requirement
+ * that still holds, absorb what the new round pinned better, and keep the
+ * definition-file contract intact so the confirm overwrites in place.
+ * @returns exact system prompt text for one skill-evolution round.
+ */
+export function skillEvolutionSystemPrompt(): string {
+  return [
+    'You are a skill definition maintainer. The user gives you the current definition of one agent skill plus the draft, optimized rewrite, and clarifying answers of a newer round of the same prompt shape. Rewrite the skill definition from these materials.',
+    '',
+    'Rules:',
+    '1. Output only the skill file: YAML frontmatter, then the markdown body. No preamble, no closing remarks, no code fences around the whole file.',
+    '2. Keep the current `name:` value verbatim; the `description:` may widen or tighten to match the shape the materials demonstrate, still one line within the same length cap.',
+    '3. Keep every requirement of the current definition that the materials do not contradict — evolution never drops pinned constraints; fold in every requirement the optimized rewrite and the answers pin that the current definition lacks.',
+    '4. Where the current definition and the materials phrase the same requirement differently, keep the more specific and the more checkable phrasing.',
+    '5. Keep the body structure and progressive disclosure of a well-formed skill file: under 120 lines, one reference level deep.',
+    '6. Never invent facts, tools, thresholds, or requirements the materials do not support; never mention this plugin, the rewrite, or the evolution.',
+    '7. Write the body in the language the current definition is written in; keep the `name` value and code identifiers in their original form.',
+  ].join('\n')
+}
+
+/**
+ * Frame the evolution materials (current definition plus the newer round) as
+ * the round's user input.
+ * @param definition - complete current skill definition text.
+ * @param draft - complete draft text the newer round optimized.
+ * @param optimized - complete optimized text the newer round produced.
+ * @param clarifications - interview answers the newer round carried.
+ * @returns exact user input for the skill-evolution round.
+ */
+export function skillEvolutionUserInput(
+  definition: string,
+  draft: string,
+  optimized: string,
+  clarifications: readonly PromptClarification[],
+): string {
+  const answers = clarifications.map(pair => `Q: ${pair.question}\nA: ${pair.answer}`).join('\n\n')
+  return [
+    'Rewrite this skill definition from the newer round below.',
+    '',
+    '--- current skill definition ---',
+    definition,
+    '',
+    '--- draft the newer round optimized ---',
+    draft,
+    '',
+    '--- optimized result ---',
+    optimized,
+    ...(clarifications.length === 0
+      ? []
+      : ['', '--- the user\'s authoritative answers ---', answers]),
+    '',
+    'Output only the updated skill file in the required format.',
+  ].join('\n')
+}
+
+/**
+ * The section-merge system prompt: fuse two near-duplicate system-prompt
+ * sections into one replacement section the user pastes back by hand — the
+ * assembled system prompt has no write-back API, so the output is advisory
+ * copy, never a rewrite of anything.
+ * @returns exact system prompt text for one section-merge round.
+ */
+export function sectionMergeSystemPrompt(): string {
+  return [
+    'You are a system-prompt section merger. The user gives you two sections of an assembled system prompt that largely repeat each other. Produce one merged replacement section.',
+    '',
+    'Rules:',
+    '1. Output only the merged section text — no heading marker, no preamble, no closing remarks, no code fences.',
+    '2. Merge by union: every instruction, rule, and fact either section stated appears once. Never drop or soften anything; never invent anything.',
+    '3. Where the two sections phrase the same rule differently, keep the more specific and the more checkable phrasing.',
+    '4. Keep the merged section no longer than the longer input section; prefer tightening duplicated phrasing over appending.',
+    '5. Write the merged section in the language the two sections are written in; keep code identifiers and tool names verbatim.',
+  ].join('\n')
+}
+
+/**
+ * Frame the two near-duplicate system-prompt sections as the merge round's
+ * user input.
+ * @param leftName - first section's name.
+ * @param leftText - first section's complete text.
+ * @param rightName - second section's name.
+ * @param rightText - second section's complete text.
+ * @returns exact user input for the section-merge round.
+ */
+export function sectionMergeUserInput(leftName: string, leftText: string, rightName: string, rightText: string): string {
+  return [
+    'Merge the two near-duplicate system-prompt sections below into one replacement section.',
+    '',
+    `--- section "${leftName}" ---`,
+    leftText,
+    '',
+    `--- section "${rightName}" ---`,
+    rightText,
+    '',
+    'Output only the merged section text in the required format.',
+  ].join('\n')
 }
 
 /**
@@ -791,17 +997,19 @@ export function roleEvolutionUserInput(definition: string, draft: string, optimi
 }
 
 /**
- * Frame one draft (and optional rejected earlier results plus answered
- * clarifying questions) as the round's user input.
+ * Frame one draft (and optional rejected earlier results, answered clarifying
+ * questions, and a same-domain adopted precedent) as the round's user input.
  * @param text - complete draft text to optimize.
  * @param previousAttempts - rejected optimized texts, oldest first.
  * @param clarifications - interview answers folded in as authoritative requirements.
+ * @param precedent - best previously adopted rewrite of a similar draft, as reference-only material.
  * @returns exact user input for the round.
  */
 export function optimizerUserInput(
   text: string,
   previousAttempts: readonly string[],
   clarifications: readonly PromptClarification[] = [],
+  precedent: string | undefined = undefined,
 ): string {
   const earlier = previousAttempts.map((attempt, index) =>
     `--- rejected result ${String(index + 1)} ---\n${attempt}`).join('\n\n')
@@ -813,6 +1021,9 @@ export function optimizerUserInput(
     clarifications.length === 0
       ? ''
       : `The user answered these clarifying questions; each answer is an authoritative requirement of the rewrite:\n\n${answers}\n`,
+    precedent === undefined
+      ? ''
+      : `A previously adopted rewrite of a similar draft in this domain (reference only — never copy verbatim; the draft's own facts and the user's answers always win):\n\n${precedent}\n`,
     'Optimize the following draft prompt:',
     '',
     text,

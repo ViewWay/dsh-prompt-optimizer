@@ -17,6 +17,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'prompt-optimizer/distill-failed': { readonly reason: string }
     /** One context scan failed; `reason` names the typed service failure. */
     'prompt-optimizer/context-failed': { readonly reason: string }
+    /** One context-doctor repair proposal or write failed; `reason` names the typed service failure. */
+    'prompt-optimizer/context-fix-failed': { readonly reason: string }
+    /** One evidence-pack run failed; `reason` names the typed service failure. */
+    'prompt-optimizer/eval-failed': { readonly reason: string }
     /** One intent-clarification interview round failed; `reason` names the typed service failure. */
     'prompt-optimizer/interview-failed': { readonly reason: string }
     /** One local-metrics operation failed; `reason` names the typed service failure. */
@@ -40,8 +44,14 @@ export type {
   PromptContextCheckRequest,
   PromptContextCheckResult,
   PromptContextFinding,
+  PromptContextFixKind,
+  PromptContextFixRequest,
+  PromptContextFixResult,
   PromptDistillRequest,
   PromptDistillResult,
+  PromptEvalRunRequest,
+  PromptEvalRunResult,
+  PromptEvalSampleOutcome,
   PromptCandidateScores,
   PromptCandidatesRequest,
   PromptCandidatesResult,

@@ -109,6 +109,7 @@ export interface PreviewPanelActions {
    * @param draft - complete draft text the round optimized.
    * @param optimized - complete optimized text the round produced.
    * @param clarifications - interview answers the round carried; they condition the skill.
+   * @param evolveOf - kebab-case name of an existing distilled skill this round updates instead of distilling a fresh one.
    * @param confirm - true commits the staged preview; absent requests a preview only.
    */
   distillSkill: (
@@ -116,6 +117,7 @@ export interface PreviewPanelActions {
     draft: string,
     optimized: string,
     clarifications?: readonly PromptClarification[],
+    evolveOf?: string,
     confirm?: boolean,
   ) => Promise<PromptDistillResult>
 }
@@ -198,15 +200,16 @@ interface EvolutionState {
 
 const EVOLUTION_IDLE: EvolutionState = { running: false, doneName: undefined, error: undefined, pending: undefined }
 
-/** Distill-button view state; `pending` holds the staged SKILL.md awaiting review. */
+/** Distill-button view state; `pending` holds the staged SKILL.md awaiting review, `evolveName` marks an evolution. */
 interface DistillState {
   readonly running: boolean
   readonly doneName: string | undefined
   readonly error: string | undefined
   readonly pending: PromptDistillResult | undefined
+  readonly evolveName: string | undefined
 }
 
-const DISTILL_IDLE: DistillState = { running: false, doneName: undefined, error: undefined, pending: undefined }
+const DISTILL_IDLE: DistillState = { running: false, doneName: undefined, error: undefined, pending: undefined, evolveName: undefined }
 
 /** Render one Session's optimization preview in the composer seat. */
 export function PreviewPanel(props: PreviewPanelProps) {
@@ -312,21 +315,21 @@ export function PreviewPanel(props: PreviewPanelProps) {
     setEvolution(EVOLUTION_IDLE)
   }
 
-  const distill = (): void => {
+  const distill = (evolveOf?: string): void => {
     const result = state.result
     if (result === undefined || distillation.running || distillation.pending !== undefined) return
-    setDistillation({ running: true, doneName: undefined, error: undefined, pending: undefined })
+    setDistillation({ running: true, doneName: undefined, error: undefined, pending: undefined, evolveName: evolveOf })
     void (async () => {
       try {
-        const distilled = await distillSkill(matched.sessionId, state.draft, result.optimizedText, state.clarifications)
+        const distilled = await distillSkill(matched.sessionId, state.draft, result.optimizedText, state.clarifications, evolveOf)
         if (distilled.pendingDefinition !== undefined) {
-          setDistillation({ running: false, doneName: undefined, error: undefined, pending: distilled })
+          setDistillation({ running: false, doneName: undefined, error: undefined, pending: distilled, evolveName: evolveOf })
           return
         }
-        setDistillation({ running: false, doneName: distilled.name, error: undefined, pending: undefined })
+        setDistillation({ running: false, doneName: distilled.name, error: undefined, pending: undefined, evolveName: undefined })
       } catch (failure) {
         const message = failure instanceof Error ? failure.message : String(failure)
-        setDistillation({ running: false, doneName: undefined, error: message, pending: undefined })
+        setDistillation({ running: false, doneName: undefined, error: message, pending: undefined, evolveName: undefined })
       }
     })()
   }
@@ -337,8 +340,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
     setDistillation(draft => ({ ...draft, running: true, error: undefined }))
     void (async () => {
       try {
-        const distilled = await distillSkill(matched.sessionId, state.draft, result.optimizedText, state.clarifications, true)
-        setDistillation({ running: false, doneName: distilled.name, error: undefined, pending: undefined })
+        const distilled = await distillSkill(matched.sessionId, state.draft, result.optimizedText, state.clarifications, distillation.evolveName, true)
+        setDistillation({ running: false, doneName: distilled.name, error: undefined, pending: undefined, evolveName: undefined })
       } catch (failure) {
         const message = failure instanceof Error ? failure.message : String(failure)
         // Keep the staged definition: the failure may be transient and the review must stay readable.
@@ -507,6 +510,24 @@ export function PreviewPanel(props: PreviewPanelProps) {
                 data-testid="distill-trigger"
               >
                 {t('distillTrigger')}
+              </Button>
+              {distillation.error !== undefined
+                ? <span className={css.failed} role="alert" data-testid="distill-error">{t('distillFailed')}</span>
+                : null}
+            </div>
+          </div>
+          : null}
+        {ready && !skipped && state.result.suggestEvolve !== undefined && distillation.pending === undefined && distillation.doneName === undefined
+          ? <div className={css.critique} data-testid="evolve-suggest">
+            <p className={css.noChanges}>{t('evolveSuggest', { name: state.result.suggestEvolve.name })}</p>
+            <div className={css.critiqueActions}>
+              <Button
+                size="sm" type="button"
+                disabled={distillation.running}
+                onClick={() => { distill(state.result?.suggestEvolve?.name) }}
+                data-testid="evolve-trigger"
+              >
+                {t('evolveTrigger')}
               </Button>
               {distillation.error !== undefined
                 ? <span className={css.failed} role="alert" data-testid="distill-error">{t('distillFailed')}</span>

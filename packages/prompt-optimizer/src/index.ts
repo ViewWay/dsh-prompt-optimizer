@@ -41,8 +41,15 @@ import type {
   PromptCandidatesResult,
   PromptContextCheckRequest,
   PromptContextCheckResult,
+  PromptContextFinding,
+  PromptContextFixKind,
+  PromptContextFixRequest,
+  PromptContextFixResult,
   PromptDistillRequest,
   PromptDistillResult,
+  PromptEvalRunRequest,
+  PromptEvalRunResult,
+  PromptEvalSampleOutcome,
   PromptClarification,
   PromptInterviewRequest,
   PromptInterviewResult,
@@ -69,9 +76,11 @@ import {
   candidateUserInput,
   critiqueSystemPrompt,
   critiqueUserInput,
+  detectDomainId,
   detectDomainPriors,
   distillationSystemPrompt,
   distillationUserInput,
+  goalInterviewSystemPrompt,
   interviewSystemPrompt,
   interviewUserInput,
   judgeSystemPrompt,
@@ -84,13 +93,22 @@ import {
   parseOptimizerResponse,
   parseSkillDefinition,
   paretoFlags,
+  sectionMergeSystemPrompt,
+  sectionMergeUserInput,
+  skillEvolutionSystemPrompt,
+  skillEvolutionUserInput,
+  skillMergeSystemPrompt,
+  skillMergeUserInput,
   roleEvolutionSystemPrompt,
   roleEvolutionUserInput,
+  SKILL_NAME_PATTERN,
 } from './meta-prompt.ts'
 import type { PromptRoleRef, RoundConditioning } from './meta-prompt.ts'
 import { recommendRoles as rankRoles } from './recommend.ts'
 import { classifyModelTier, declineToOptimize } from './model-tier.ts'
 import { analyzeSections, analyzeSkills, estimateTokens } from './context-check.ts'
+import { isWithin, nearestExistingFile, plainMergeText, referenceOfDetail, splitPairSubject, stripReference } from './context-fix.ts'
+import { EVAL_MAX_SAMPLES, selectEvalSamples } from './eval-pack.ts'
 import { enrichSkillHint, MAX_DETAIL_HINTS, selectSkillHints } from './skills.ts'
 import type { SkillHint } from './skills.ts'
 import { screenVerifyCommand } from './verify-policy.ts'
@@ -114,6 +132,8 @@ declare module '@deepseek-ai/dsh-session/types' {
     'plugin:prompt-optimizer/interview': PromptOptimizerInterviewEventData
     /** Log-only record of one completed skill distillation write. */
     'plugin:prompt-optimizer/distilled': PromptOptimizerDistilledEventData
+    /** Log-only record of one confirmed context-doctor repair write. */
+    'plugin:prompt-optimizer/context-fixed': PromptOptimizerContextFixedEventData
   }
 }
 
@@ -216,6 +236,70 @@ export interface PromptOptimizerRoleEvolvedEventData {
   readonly bytes: number
 }
 
+/** One confirmed context-doctor repair write, recorded after the write. */
+export interface PromptOptimizerContextFixedEventData {
+  /** Fixable finding kind the repair addressed. */
+  readonly kind: PromptContextFixKind
+  /** Finding subject the repair addressed. */
+  readonly subject: string
+  /** UTF-8 byte size of the written proposal. */
+  readonly bytes: number
+}
+
+/** One repair pending a confirming call, stored per session by the preview phase. */
+interface PendingContextFix {
+  /** Fixable finding kind the repair addresses. */
+  readonly kind: PromptContextFixKind
+  /** Finding subject the repair addresses. */
+  readonly subject: string
+  /** Full replacement text a confirming call writes. */
+  readonly proposal: string
+  /** File the confirm rewrites; undefined never pends (advisory proposals do not). */
+  readonly targetFile: string | undefined
+  /** duplicate-skill only: the second definition file retired to a stub, and the names the stub carries. */
+  readonly retire: { readonly file: string; readonly retiredName: string; readonly mergeInto: string } | undefined
+}
+
+/**
+ * Tombstone definition written over the retired half of a duplicate-skill
+ * merge: the filesystem service has no delete, so the stub keeps the slot
+ * parseable, stays far below the duplicate-detection floor, and tells the
+ * reader the directory is safe to delete by hand.
+ * @param retiredName - registry name of the retired skill.
+ * @param mergeInto - registry name of the skill that absorbed it.
+ * @returns the tombstone SKILL.md text.
+ */
+function retiredSkillDefinition(retiredName: string, mergeInto: string): string {
+  return [
+    '---',
+    `name: ${retiredName}`,
+    `description: Retired - merged into ${mergeInto}; this directory can be deleted.`,
+    '---',
+    '',
+    '# Retired',
+    '',
+    `Merged into \`${mergeInto}\`; use that skill instead.`,
+    '',
+  ].join('\n')
+}
+
+/**
+ * Pin a merged skill definition's frontmatter `name:` to the first skill's
+ * registry name: the merged file lives in that skill's directory, so a
+ * model-renamed value would break the catalog mapping.
+ * @param definition - merged definition file text, frontmatter included.
+ * @param name - canonical registry name to pin.
+ * @returns the definition with its first frontmatter `name:` line rewritten.
+ */
+function canonicalSkillName(definition: string, name: string): string {
+  return definition.replace(/^(---\n[\s\S]*?)^name:.*$/m, `$1name: ${name}`)
+}
+
+/** Normalized one-way fingerprint of a draft: trimmed, lowercased, whitespace-collapsed, then SHA-256. */
+function draftFingerprint(draft: string): string {
+  return createHash('sha256').update(draft.trim().toLowerCase().replace(/\s+/g, ' ')).digest('hex')
+}
+
 /** Deployment-tunable execution controls for one optimization round. */
 export interface Config {
   /** Maximum UTF-8 bytes accepted for the draft text. */
@@ -242,6 +326,8 @@ export interface Config {
   readonly skipCheck: boolean
   /** Whether local optimization metrics are recorded and aggregated. */
   readonly metrics: boolean
+  /** Whether adopted results persist as same-domain precedents that later rounds reference. */
+  readonly precedents: boolean
   /** Optional absolute directory distillation writes `<name>/SKILL.md` into; defaults to the session project's `.dsh/skills`. */
   readonly distillDir?: string
 }
@@ -260,6 +346,8 @@ const LIBRARY_MAX_ENTRIES = 100
 const MAX_PREVIOUS_ATTEMPTS = 5
 /** Most interview answers one optimize request may carry. */
 const MAX_CLARIFICATIONS = 6
+/** Most acceptance criteria one goal-mode request may carry. */
+const MAX_GOAL_CRITERIA = 4
 /** Smallest candidate count one candidates round accepts. */
 const CANDIDATE_MIN = 2
 /** Largest candidate count one candidates round accepts. */
@@ -276,6 +364,14 @@ const SKILL_MAX_CHARS = 8000
 const MAX_SCANNED_SKILLS = 16
 /** Most system-prompt track rows kept on disk, across every session. */
 const TRACKS_MAX_ROWS = 200
+/** Most draft-to-skill link rows kept on disk; the oldest beyond the cap are pruned on write. */
+const SKILL_LINKS_MAX_ROWS = 200
+/** Precedents kept per domain, ranked by judge total then recency. */
+const PRECEDENTS_PER_DOMAIN = 3
+/** Most precedent rows kept on disk across every domain; the lowest-ranked beyond the cap are pruned on write. */
+const PRECEDENTS_MAX_ROWS = 100
+/** Sample count an evidence run carries when the request names none. */
+const EVAL_DEFAULT_SAMPLES = 3
 /** Metric kinds a client may report; host-written kinds are never accepted from the wire. */
 const CLIENT_METRIC_KINDS: readonly PromptMetricKind[] = ['adopted', 'rejected', 'decline-overridden']
 /** Most metric rows kept on disk; the oldest beyond the cap are pruned on write. */
@@ -284,6 +380,8 @@ const METRICS_MAX_ROWS = 2_000
 const METRICS_AGGREGATE_ROWS = 1_000
 /** Every rewrite direction a request may steer a round toward. */
 const DIRECTIONS: readonly PromptOptimizeDirection[] = ['concise', 'detailed', 'technical', 'structured', 'acceptance']
+/** Finding kinds the repair flow accepts. */
+const CONTEXT_FIX_KINDS: readonly PromptContextFixKind[] = ['stale-skill-reference', 'duplicate-skill', 'duplicate-section']
 /** Slug shape a role id must have before the directory listing is consulted. */
 const ROLE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/
 /** Filenames that count as role definitions: `<slug>.md` exactly. */
@@ -406,6 +504,63 @@ const libraryDomainSpec = defineDomain({
       text: zod.string(),
       createdAt: zod.string(),
       sourceSessionId: zod.string(),
+    })),
+  },
+})
+
+/** Persisted draft-to-skill link row; the storage schema validates this plain shape. */
+interface SkillLinkRow {
+  id: string
+  createdAt: string
+  fingerprint: string
+  name: string
+  targetDir: string
+}
+
+/**
+ * Draft-to-skill links: the latest normalized-draft fingerprint each
+ * distilled skill was born from (never draft content), powering the
+ * "update that skill instead of distilling a fresh one" suggestion.
+ */
+const skillLinksDomainSpec = defineDomain({
+  name: 'prompt_optimizer_skill_links',
+  version: 1,
+  tables: {
+    links: domainTable<string, SkillLinkRow>(zod.object({
+      id: zod.string(),
+      createdAt: zod.string(),
+      fingerprint: zod.string(),
+      name: zod.string(),
+      targetDir: zod.string(),
+    })),
+  },
+})
+
+/** Persisted same-domain precedent row; the storage schema validates this plain shape. */
+interface PrecedentRow {
+  id: string
+  createdAt: string
+  domain: string
+  text: string
+  /** Judge total (0–30) when the adopted candidate was judged; absent otherwise. */
+  judgeTotal?: number | undefined
+}
+
+/**
+ * Same-domain precedents: adopted optimization results (full text — unlike
+ * the metrics domain, this one carries content by design) that later rounds
+ * in the same technical domain reference as prior art.
+ */
+const precedentsDomainSpec = defineDomain({
+  name: 'prompt_optimizer_precedents',
+  version: 1,
+  tables: {
+    precedents: domainTable<string, PrecedentRow>(zod.object({
+      id: zod.string(),
+      createdAt: zod.string(),
+      domain: zod.string(),
+      text: zod.string(),
+      judgeTotal: zod.number().optional(),
     })),
   },
 })
@@ -581,6 +736,35 @@ function normalizeClarifications(
 }
 
 /**
+ * Normalize the acceptance criteria one goal-mode request carries: trimmed,
+ * count- and byte-capped, every entry non-empty — they are authoritative, so
+ * a malformed replay must fail loudly instead of quietly degrading the round.
+ * @param criteria - raw request field.
+ * @param maxBytes - byte cap the criteria's combined size must respect.
+ * @returns the normalized criteria; empty for a plain round.
+ * @throws when an entry is empty, the count exceeds the cap, or the combined
+ * size exceeds `maxBytes`.
+ */
+function normalizeGoalCriteria(
+  criteria: readonly string[] | undefined,
+  maxBytes: number,
+): readonly string[] {
+  if (criteria === undefined) return []
+  if (criteria.length > MAX_GOAL_CRITERIA) {
+    fail('PROMPT_OPTIMIZER_BAD_GOAL_CRITERIA', `prompt-optimizer: at most ${String(MAX_GOAL_CRITERIA)} acceptance criteria may be carried`)
+  }
+  const normalized = criteria.map(criterion => criterion.trim())
+  if (normalized.some(criterion => criterion === '')) {
+    fail('PROMPT_OPTIMIZER_BAD_GOAL_CRITERIA', 'prompt-optimizer: every acceptance criterion needs to be non-empty')
+  }
+  const bytes = normalized.reduce((total, criterion) => total + Buffer.byteLength(criterion, 'utf8'), 0)
+  if (bytes > maxBytes) {
+    fail('PROMPT_OPTIMIZER_BAD_GOAL_CRITERIA', `prompt-optimizer: acceptance criteria total ${String(bytes)} bytes, exceeding maxInputBytes ${String(maxBytes)}`)
+  }
+  return normalized
+}
+
+/**
  * Build the no-adapter failure body: the requested id, the routes the app
  * currently serves, and the exact-match rule. Route keys are matched
  * character-for-character, so gateway-deployed models (LiteLLM, vLLM,
@@ -705,6 +889,7 @@ export default class PromptOptimizer extends Service {
     skillAware: z.boolean().default(true),
     skipCheck: z.boolean().default(true),
     metrics: z.boolean().default(true),
+    precedents: z.boolean().default(true),
     distillDir: z.string(),
   })
 
@@ -836,6 +1021,7 @@ export default class PromptOptimizer extends Service {
       fail('PROMPT_OPTIMIZER_ATTEMPTS_TOO_MANY', `prompt-optimizer: replayed rejected results total ${String(replayedBytes)} bytes, exceeding maxInputBytes ${String(this.config.maxInputBytes)}`)
     }
     const clarifications = normalizeClarifications(request.clarifications, this.config.maxInputBytes)
+    const goalCriteria = normalizeGoalCriteria(request.goalCriteria, this.config.maxInputBytes)
     const requestedRole = request.role ?? this.config.defaultRole
     const role = requestedRole === undefined ? undefined : await this.loadRole(requestedRole, signal)
     const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
@@ -884,16 +1070,18 @@ export default class PromptOptimizer extends Service {
       skills,
       tier,
       ...(clarifications.length > 0 ? { clarifications } : {}),
+      ...(goalCriteria.length > 0 ? { goalCriteria } : {}),
       ...(role !== undefined ? { role } : {}),
       ...(language !== undefined ? { language } : {}),
       ...(direction !== undefined ? { direction } : {}),
     }
+    const precedent = await this.roundPrecedent(request.text, tier)
     const first = await this.dispatchRound(session, {
       route,
       target,
       round: 1,
       system: target === 'system' ? optimizerSystemPromptForSystem(conditioning) : optimizerSystemPrompt(conditioning),
-      input: optimizerUserInput(request.text, previousAttempts, clarifications),
+      input: optimizerUserInput(request.text, previousAttempts, clarifications, precedent),
       inputBytes,
       previousAttempts,
       sessionId: request.sessionId,
@@ -908,7 +1096,7 @@ export default class PromptOptimizer extends Service {
     if (first.parsed.optimizedText === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_RESULT', 'prompt-optimizer: the model returned an empty rewrite')
     }
-    const suggestDistill = await this.noteRepeat(session, request.text)
+    const suggestions = await this.repeatSuggestions(session, request.text)
     if (target === 'draft') {
       return {
         optimizedText: first.parsed.optimizedText,
@@ -920,7 +1108,8 @@ export default class PromptOptimizer extends Service {
         ...(role !== undefined ? { role: role.id } : {}),
         ...(direction !== undefined ? { direction } : {}),
         ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
-        ...(suggestDistill ? { suggestDistill: true } : {}),
+        ...(suggestions.suggestDistill === true ? { suggestDistill: true } : {}),
+      ...(suggestions.suggestEvolve !== undefined ? { suggestEvolve: suggestions.suggestEvolve } : {}),
         ...(await this.systemPromptStaleness(session, route)),
         ...(first.usage !== undefined ? { usage: first.usage } : {}),
       }
@@ -958,7 +1147,8 @@ export default class PromptOptimizer extends Service {
       ...(role !== undefined ? { role: role.id } : {}),
       ...(direction !== undefined ? { direction } : {}),
       ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
-      ...(suggestDistill ? { suggestDistill: true } : {}),
+      ...(suggestions.suggestDistill === true ? { suggestDistill: true } : {}),
+      ...(suggestions.suggestEvolve !== undefined ? { suggestEvolve: suggestions.suggestEvolve } : {}),
       ...(await this.systemPromptStaleness(session, route)),
       ...(usage !== undefined ? { usage } : {}),
     }
@@ -1000,6 +1190,7 @@ export default class PromptOptimizer extends Service {
       fail('PROMPT_OPTIMIZER_BAD_DIRECTION', `prompt-optimizer: unknown direction "${direction}"; expected one of ${DIRECTIONS.join(', ')}`)
     }
     const clarifications = normalizeClarifications(request.clarifications, this.config.maxInputBytes)
+    const goalCriteria = normalizeGoalCriteria(request.goalCriteria, this.config.maxInputBytes)
     const requestedRole = request.role ?? this.config.defaultRole
     const role = requestedRole === undefined ? undefined : await this.loadRole(requestedRole, signal)
     const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
@@ -1047,10 +1238,12 @@ export default class PromptOptimizer extends Service {
       skills,
       tier,
       ...(clarifications.length > 0 ? { clarifications } : {}),
+      ...(goalCriteria.length > 0 ? { goalCriteria } : {}),
       ...(role !== undefined ? { role } : {}),
       ...(language !== undefined ? { language } : {}),
       ...(direction !== undefined ? { direction } : {}),
     }
+    const precedent = await this.roundPrecedent(request.text, tier)
     const generated: { label: string; optimizedText: string; changes: readonly string[]; acceptance: PromptCandidate['acceptance']; usage: TokenUsage | undefined }[] = []
     for (let index = 0; index < count; index += 1) {
       signal.throwIfAborted()
@@ -1064,6 +1257,7 @@ export default class PromptOptimizer extends Service {
           request.text,
           clarifications,
           generated.map(candidate => ({ label: candidate.label, text: candidate.optimizedText })),
+          precedent,
         ),
         inputBytes,
         previousAttempts: [],
@@ -1158,17 +1352,132 @@ export default class PromptOptimizer extends Service {
       }
     }
     const usage = sumTokenUsage([...generated.map(candidate => candidate.usage), judgeUsage])
-    const suggestDistill = await this.noteRepeat(session, request.text)
+    const suggestions = await this.repeatSuggestions(session, request.text)
     return {
       candidates,
       recommended: recommendedIndex,
       ...(judgeError !== undefined ? { judgeFailed: true, judgeError } : {}),
-      ...(suggestDistill ? { suggestDistill: true } : {}),
+      ...(suggestions.suggestDistill === true ? { suggestDistill: true } : {}),
+      ...(suggestions.suggestEvolve !== undefined ? { suggestEvolve: suggestions.suggestEvolve } : {}),
       ...(await this.systemPromptStaleness(session, route)),
       provider: route.provider,
       model: route.model,
       tier,
       ...(skills.length > 0 ? { skills: skills.map(hint => hint.name) } : {}),
+      ...(usage !== undefined ? { usage } : {}),
+    }
+  }
+
+  /**
+   * Run the bundled evidence pack on the Session's current route: every
+   * selected sample goes through one rewrite round plus one judge round that
+   * scores the raw draft against the rewrite, so the settings card can show
+   * whether optimization measurably helps this route — and re-run the
+   * comparison after a model switch makes the standing guidance stale. A
+   * failed judge degrades that sample to unscored instead of failing the run.
+   * @param request - session and optional sample count (default 3, allowed 1–6).
+   * @param signal - caller cancellation.
+   * @returns per-sample outcomes with the improved and judged totals.
+   * @throws when the session is gone, the count is out of bounds, or a
+   * rewrite round fails.
+   */
+  async runEvalPack(request: PromptEvalRunRequest, signal: AbortSignal): Promise<PromptEvalRunResult> {
+    signal.throwIfAborted()
+    const session = this.ctx.sessions.get(request.sessionId)
+    if (session === undefined) {
+      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
+    }
+    const count = request.count ?? EVAL_DEFAULT_SAMPLES
+    if (!Number.isInteger(count) || count < 1 || count > EVAL_MAX_SAMPLES) {
+      fail('PROMPT_OPTIMIZER_BAD_EVAL_COUNT', `prompt-optimizer: count must be an integer between 1 and ${String(EVAL_MAX_SAMPLES)}`)
+    }
+    const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+    const tier = classifyModelTier(route.provider, route.model)
+    const outcomes: PromptEvalSampleOutcome[] = []
+    const usages: (TokenUsage | undefined)[] = []
+    for (const sample of selectEvalSamples(count)) {
+      signal.throwIfAborted()
+      const inputBytes = Buffer.byteLength(sample.draft, 'utf8')
+      const rewrite = await this.dispatchRound(session, {
+        route,
+        target: 'draft',
+        round: 1,
+        system: optimizerSystemPrompt({
+          ...(this.config.domainPriors ? { domainPriors: detectDomainPriors(sample.draft) } : {}),
+          tier,
+        }),
+        input: optimizerUserInput(sample.draft, []),
+        inputBytes,
+        previousAttempts: [],
+        sessionId: request.sessionId,
+        role: undefined,
+        skillsHinted: 0,
+        language: undefined,
+        direction: undefined,
+        tier,
+        clarifications: 0,
+        judge: false,
+      }, signal)
+      if (rewrite.parsed.optimizedText === '') {
+        fail('PROMPT_OPTIMIZER_EMPTY_RESULT', `prompt-optimizer: the evidence rewrite for sample "${sample.id}" came back empty`)
+      }
+      usages.push(rewrite.usage)
+      let rawTotal: number | undefined
+      let optimizedTotal: number | undefined
+      try {
+        signal.throwIfAborted()
+        const judgeRound = await this.dispatchRound(session, {
+          route,
+          target: 'draft',
+          round: 2,
+          system: judgeSystemPrompt(),
+          input: judgeUserInput(sample.draft, [], [
+            { label: 'A', text: sample.draft },
+            { label: 'B', text: rewrite.parsed.optimizedText },
+          ]),
+          inputBytes,
+          previousAttempts: [],
+          sessionId: request.sessionId,
+          role: undefined,
+          skillsHinted: 0,
+          language: undefined,
+          direction: undefined,
+          tier,
+          clarifications: 0,
+          judge: true,
+        }, signal)
+        usages.push(judgeRound.usage)
+        const parsed = parseJudgeResponse(judgeRound.parsed.optimizedText, ['A', 'B'])
+        const totalOf = (scores: { faithfulness: number; completeness: number; clarity: number } | undefined): number | undefined =>
+          scores === undefined ? undefined : scores.faithfulness + scores.completeness + scores.clarity
+        rawTotal = totalOf(parsed.scores.find(entry => entry.label === 'A')?.scores)
+        optimizedTotal = totalOf(parsed.scores.find(entry => entry.label === 'B')?.scores)
+      } catch {
+        signal.throwIfAborted()
+        // A failed judge degrades the sample to unscored instead of failing the run.
+      }
+      outcomes.push({
+        id: sample.id,
+        domain: sample.domain,
+        ...(rawTotal !== undefined ? { rawTotal } : {}),
+        ...(optimizedTotal !== undefined ? { optimizedTotal } : {}),
+        improved: rawTotal !== undefined && optimizedTotal !== undefined && optimizedTotal > rawTotal,
+      })
+    }
+    const improved = outcomes.filter(outcome => outcome.improved).length
+    const judged = outcomes.filter(outcome => outcome.rawTotal !== undefined && outcome.optimizedTotal !== undefined).length
+    await this.recordMetric('eval-run', route, tier, outcomes.length)
+    if (improved > 0) {
+      await this.recordMetric('eval-win', route, tier, improved)
+    }
+    const usage = sumTokenUsage(usages)
+    return {
+      samples: outcomes,
+      improved,
+      judged,
+      provider: route.provider,
+      model: route.model,
+      tier,
       ...(usage !== undefined ? { usage } : {}),
     }
   }
@@ -1211,7 +1520,7 @@ export default class PromptOptimizer extends Service {
       route,
       target: 'draft',
       round: 1,
-      system: interviewSystemPrompt(conditioning),
+      system: request.mode === 'goal' ? goalInterviewSystemPrompt(conditioning) : interviewSystemPrompt(conditioning),
       input: interviewUserInput(request.text),
       inputBytes,
       previousAttempts: [],
@@ -1802,9 +2111,113 @@ export default class PromptOptimizer extends Service {
     if (request.provider.trim() === '' || request.model.trim() === '') {
       fail('PROMPT_OPTIMIZER_BAD_METRIC_ROUTE', 'prompt-optimizer: a reported metric needs the round\'s provider and model')
     }
-    if (!this.config.metrics) return
-    await this.appendMetric(request.kind, request.provider, request.model, request.tier ?? 'standard', 1)
+    if (request.precedent !== undefined) {
+      if (request.kind !== 'adopted') {
+        fail('PROMPT_OPTIMIZER_BAD_METRIC_PRECEDENT', 'prompt-optimizer: only an adopted report may carry precedent materials')
+      }
+      if (request.precedent.draft.trim() === '' || request.precedent.optimizedText.trim() === '') {
+        fail('PROMPT_OPTIMIZER_BAD_METRIC_PRECEDENT', 'prompt-optimizer: precedent materials need non-empty draft and optimized text')
+      }
+    }
+    if (this.config.metrics) {
+      await this.appendMetric(request.kind, request.provider, request.model, request.tier ?? 'standard', 1)
+    }
+    if (request.precedent !== undefined && this.config.precedents) {
+      const judged = request.precedent.judgeTotal
+      await this.recordPrecedent(
+        request.precedent.draft,
+        request.precedent.optimizedText,
+        judged !== undefined && judged >= 0 && judged <= 30 ? judged : undefined,
+      )
+    }
     signal.throwIfAborted()
+  }
+
+  /** Precedent domain handle, opened once on first use. */
+  private precedents: Promise<Domain<typeof precedentsDomainSpec>> | undefined
+
+  /**
+   * Open the precedents domain once, failing loudly when the deployment
+   * composed no storage-domain service.
+   * @returns the opened domain shared by every precedent read and write.
+   */
+  private openPrecedents(): Promise<Domain<typeof precedentsDomainSpec>> {
+    const domains = this.ctx.get('storageDomain')
+    if (domains === undefined) {
+      fail('PROMPT_OPTIMIZER_NO_LIBRARY', 'prompt-optimizer: no storage-domain service is composed; add dsh-storage-domain to persist precedents')
+    }
+    this.precedents ??= domains.open(precedentsDomainSpec)
+    return this.precedents
+  }
+
+  /**
+   * Record one adopted result as a same-domain precedent, keeping only the
+   * {@link PRECEDENTS_PER_DOMAIN} best-ranked rows per domain (judge total
+   * first, recency second) and the global row cap. Best-effort: a storage
+   * failure degrades to a warning and never fails the report.
+   * @param draft - complete draft text the adopted round optimized.
+   * @param optimizedText - complete adopted optimized text.
+   * @param judgeTotal - judge total (0–30) when the adopted candidate was judged.
+   */
+  private async recordPrecedent(draft: string, optimizedText: string, judgeTotal: number | undefined): Promise<void> {
+    try {
+      const table = (await this.openPrecedents()).table('precedents')
+      const id = randomUUID()
+      const row: PrecedentRow = { id, createdAt: new Date().toISOString(), domain: this.domainKeyOf(draft), text: optimizedText, ...(judgeTotal !== undefined ? { judgeTotal } : {}) }
+      await table.put(id, row)
+      const rank = (entry: PrecedentRow): number => (entry.judgeTotal ?? -1) * 1e13 + Date.parse(entry.createdAt)
+      const all = [...table.entries()].map(([, entry]) => entry)
+      for (const domain of new Set(all.map(entry => entry.domain))) {
+        const ranked = all.filter(entry => entry.domain === domain).sort((left, right) => rank(right) - rank(left))
+        for (const dropped of ranked.slice(PRECEDENTS_PER_DOMAIN)) {
+          await table.delete(dropped.id)
+        }
+      }
+      const remaining = [...table.entries()].map(([, entry]) => entry).sort((left, right) => rank(right) - rank(left))
+      for (const dropped of remaining.slice(PRECEDENTS_MAX_ROWS)) {
+        await table.delete(dropped.id)
+      }
+    } catch (error) {
+      this.ctx.logger.warn(`prompt optimizer: recording a precedent failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * Look up the best same-domain precedent: highest judge total first, most
+   * recent second. Best-effort: a storage failure yields no precedent.
+   * @param domain - domain bucket the round's draft falls under.
+   * @returns the precedent text, or undefined when the domain holds none.
+   */
+  private async lookupPrecedent(domain: string): Promise<string | undefined> {
+    try {
+      const table = (await this.openPrecedents()).table('precedents')
+      const best = [...table.entries()]
+        .map(([, entry]) => entry)
+        .filter(entry => entry.domain === domain)
+        .sort((left, right) => (right.judgeTotal ?? -1) - (left.judgeTotal ?? -1) || right.createdAt.localeCompare(left.createdAt))[0]
+      return best === undefined ? undefined : best.text
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Resolve the precedent text one round should reference: precedents on,
+   * the route not a context-starved local-small tier, and a persisted
+   * same-domain precedent actually existing.
+   * @param draft - complete draft text the round will optimize.
+   * @param tier - capability tier of the round's route.
+   * @returns the precedent text, or undefined when nothing applies.
+   */
+  private async roundPrecedent(draft: string, tier: ModelTier): Promise<string | undefined> {
+    if (!this.config.precedents || tier === 'local-small') return undefined
+    return this.lookupPrecedent(this.domainKeyOf(draft))
+  }
+
+  /** Domain bucket a draft's precedents live under; `general` when no prior matches or priors are off. */
+  private domainKeyOf(draft: string): string {
+    if (!this.config.domainPriors) return 'general'
+    return detectDomainId(draft) ?? 'general'
   }
 
   /** Repeat-fingerprint domain handle, opened once on first use. */
@@ -1826,19 +2239,18 @@ export default class PromptOptimizer extends Service {
 
   /**
    * Record one completed optimization of a draft as a normalized fingerprint
-   * and report whether this is the round the distillation suggestion fires.
-   * Fingerprints are one-way hashes — never draft content. Best-effort by
-   * design: a storage failure degrades to no suggestion and never fails the
-   * round it observes.
+   * and report whether this completion is a suggestion threshold. Fingerprints
+   * are one-way hashes — never draft content. Best-effort by design: a storage
+   * failure degrades to no suggestion and never fails the round it observes.
    * @param session - live session that owns the completed round (unused beyond shape parity).
    * @param draft - complete draft text the round optimized.
-   * @returns true exactly when this completion is the {@link REPEAT_DISTILL_THRESHOLD}-th of the same normalized draft.
+   * @returns true exactly when this completion is every {@link REPEAT_DISTILL_THRESHOLD}-th of the same normalized draft — the third fires a fresh distillation suggestion, and later multiples re-surface the suggestion (as an update once a link exists).
    */
   private async noteRepeat(session: Session, draft: string): Promise<boolean> {
     void session
     if (!this.config.metrics) return false
     try {
-      const fingerprint = createHash('sha256').update(draft.trim().toLowerCase().replace(/\s+/g, ' ')).digest('hex')
+      const fingerprint = draftFingerprint(draft)
       const table = (await this.openRepeats()).table('repeats')
       const id = randomUUID()
       await table.put(id, { id, createdAt: new Date().toISOString(), fingerprint })
@@ -1847,11 +2259,123 @@ export default class PromptOptimizer extends Service {
       for (let index = 0; index < excess; index += 1) {
         await table.delete(entries[index]![0])
       }
-      return entries.filter(([, row]) => row.fingerprint === fingerprint).length === REPEAT_DISTILL_THRESHOLD
+      const count = entries.filter(([, row]) => row.fingerprint === fingerprint).length
+      return count >= REPEAT_DISTILL_THRESHOLD && count % REPEAT_DISTILL_THRESHOLD === 0
     } catch (error) {
       this.ctx.logger.warn(`prompt optimizer: recording a draft fingerprint failed: ${error instanceof Error ? error.message : String(error)}`)
       return false
     }
+  }
+
+  /**
+   * Resolve the repeat-driven suggestion flags for one completed round: the
+   * third completion of the same normalized draft suggests distilling —
+   * unless that draft already has a linked distilled skill, in which case the
+   * suggestion becomes updating that skill instead.
+   * @param session - live session that owns the completed round.
+   * @param draft - complete draft text the round optimized.
+   * @returns the suggestion flags to spread into the round's result; empty for a non-threshold round.
+   */
+  private async repeatSuggestions(session: Session, draft: string): Promise<{
+    readonly suggestDistill?: true
+    readonly suggestEvolve?: { readonly name: string }
+  }> {
+    if (!(await this.noteRepeat(session, draft))) return {}
+    const link = await this.lookupSkillLink(draftFingerprint(draft))
+    return link === undefined ? { suggestDistill: true } : { suggestEvolve: { name: link.name } }
+  }
+
+  /** Draft-to-skill link domain handle, opened once on first use. */
+  private skillLinks: Promise<Domain<typeof skillLinksDomainSpec>> | undefined
+
+  /**
+   * Open the skill-links domain once, failing loudly when the deployment
+   * composed no storage-domain service.
+   * @returns the opened domain shared by every link read and write.
+   */
+  private openSkillLinks(): Promise<Domain<typeof skillLinksDomainSpec>> {
+    const domains = this.ctx.get('storageDomain')
+    if (domains === undefined) {
+      fail('PROMPT_OPTIMIZER_NO_LIBRARY', 'prompt-optimizer: no storage-domain service is composed; add dsh-storage-domain to persist skill links')
+    }
+    this.skillLinks ??= domains.open(skillLinksDomainSpec)
+    return this.skillLinks
+  }
+
+  /**
+   * Look up the distilled skill one draft fingerprint is linked to. Best-effort
+   * by design: a storage failure yields no link and the round falls back to a
+   * fresh-distillation suggestion.
+   * @param fingerprint - normalized draft fingerprint.
+   * @returns the linked skill's name, or undefined when no link exists.
+   */
+  private async lookupSkillLink(fingerprint: string): Promise<{ readonly name: string } | undefined> {
+    if (!this.config.metrics) return undefined
+    try {
+      const table = (await this.openSkillLinks()).table('links')
+      const latest = [...table.entries()]
+        .map(([, row]) => row)
+        .filter(row => row.fingerprint === fingerprint)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+      return latest === undefined || latest.name === '' ? undefined : { name: latest.name }
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Record (or replace) the link from one draft fingerprint to the distilled
+   * skill a confirming write produced, pruning the oldest rows beyond the cap.
+   * Best-effort: a storage failure degrades to a warning and never fails the
+   * confirmed write it observes.
+   * @param draft - complete draft text the round distilled.
+   * @param name - kebab-case skill name the confirm wrote.
+   * @param targetDir - directory the confirm wrote into.
+   */
+  private async recordSkillLink(draft: string, name: string, targetDir: string): Promise<void> {
+    if (!this.config.metrics) return
+    try {
+      const table = (await this.openSkillLinks()).table('links')
+      const fingerprint = draftFingerprint(draft)
+      for (const [key, row] of table.entries()) {
+        if (row.fingerprint === fingerprint) await table.delete(key)
+      }
+      const id = randomUUID()
+      await table.put(id, { id, createdAt: new Date().toISOString(), fingerprint, name, targetDir })
+      const entries = [...table.entries()].sort((left, right) => left[1].createdAt.localeCompare(right[1].createdAt))
+      const excess = entries.length - SKILL_LINKS_MAX_ROWS
+      for (let index = 0; index < excess; index += 1) {
+        await table.delete(entries[index]![0])
+      }
+    } catch (error) {
+      this.ctx.logger.warn(`prompt optimizer: recording a skill link failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * Read one existing distilled skill's definition for an evolution round.
+   * @param fs - filesystem service that resolves and reads.
+   * @param targetDir - distillation target directory the skill lives under.
+   * @param name - kebab-case skill name the round evolves.
+   * @param signal - caller cancellation.
+   * @returns the skill's name and complete definition text.
+   * @throws when the name is malformed or no definition file reads.
+   */
+  private async loadSkillForEvolution(fs: FileSystem, targetDir: string, name: string, signal: AbortSignal): Promise<{ readonly name: string; readonly definition: string }> {
+    if (!SKILL_NAME_PATTERN.test(name)) {
+      fail('PROMPT_OPTIMIZER_EVOLVE_TARGET_NOT_FOUND', `prompt-optimizer: "${name}" is not a kebab-case skill name`)
+    }
+    let definition: string
+    try {
+      definition = await fs.readText(await fs.resolve(`${targetDir}/${name}/SKILL.md`, { signal }), signal)
+    } catch {
+      signal.throwIfAborted()
+      fail('PROMPT_OPTIMIZER_EVOLVE_TARGET_NOT_FOUND', `prompt-optimizer: no distilled skill "${name}" reads under ${targetDir}`)
+    }
+    if (definition.trim() === '') {
+      fail('PROMPT_OPTIMIZER_EVOLVE_TARGET_NOT_FOUND', `prompt-optimizer: the distilled skill "${name}" is empty`)
+    }
+    return { name, definition }
   }
 
   /** System-prompt track domain handle, opened once on first use. */
@@ -1932,8 +2456,8 @@ export default class PromptOptimizer extends Service {
     }
   }
 
-  /** Distillations pending a confirming call, keyed by session id. */
-  private readonly pendingDistills = new Map<string, string>()
+  /** Distillations pending a confirming call, keyed by session id; the flag marks an evolution preview. */
+  private readonly pendingDistills = new Map<string, { definition: string; evolved: boolean }>()
 
   /**
    * Resolve the directory the confirm phase writes `<name>/SKILL.md` into: the
@@ -1971,15 +2495,41 @@ export default class PromptOptimizer extends Service {
     if (session === undefined) {
       fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
     }
+    const scanned = await this.scanContext(session, request.sessionId, signal)
+    return {
+      ...(scanned.systemPrompt !== undefined ? { systemPrompt: scanned.systemPrompt } : {}),
+      skills: scanned.skills,
+      findings: scanned.findings,
+    }
+  }
+
+  /**
+   * One full context scan in its richer internal shape: the wire sizing the
+   * checkup returns, plus the assembled section texts and the scanned skill
+   * bodies with their directories, which the repair flow needs to compute and
+   * apply fixes.
+   * @param session - live session whose scoped context is scanned.
+   * @param sessionId - id of the session, for the agent scope lookup.
+   * @param signal - caller cancellation.
+   * @returns section texts, scanned skill bodies with directories, sizing, and findings.
+   */
+  private async scanContext(session: Session, sessionId: SessionId, signal: AbortSignal): Promise<{
+    readonly sections: readonly { readonly name: string; readonly text: string }[]
+    readonly systemPrompt: PromptContextCheckResult['systemPrompt']
+    readonly scannedSkills: readonly { readonly name: string; readonly body: string; readonly base: string | undefined }[]
+    readonly skills: PromptContextCheckResult['skills']
+    readonly findings: readonly PromptContextFinding[]
+  }> {
     const cwd = this.ctx.get('workingDirectory')?.get(session)
     const systemPrompt = this.ctx.get('systemPrompt')
     // The agent is the scope key its sections registered under; without one the scan degrades to the global layer.
-    const agent = this.ctx.get('agents')?.get(request.sessionId)
+    const agent = this.ctx.get('agents')?.get(sessionId)
+    let sections: { name: string; text: string }[] = []
     let systemPromptStat: PromptContextCheckResult['systemPrompt']
     let sectionFindings: ReturnType<typeof analyzeSections>['findings'] = []
     if (systemPrompt !== undefined) {
       const assembly = await systemPrompt.assemble({ ...(agent !== undefined ? { scope: agent } : {}), signal })
-      const sections = assembly.sections.map(section => ({ name: section.name, text: section.text }))
+      sections = assembly.sections.map(section => ({ name: section.name, text: section.text }))
       const analysis = analyzeSections(sections)
       systemPromptStat = {
         totalChars: sections.reduce((sum, section) => sum + section.text.length, 0),
@@ -1991,10 +2541,11 @@ export default class PromptOptimizer extends Service {
     const registry = this.ctx.get('skills')
     let skills: PromptContextCheckResult['skills'] = { count: 0, modelInvocable: 0, scannedBodies: 0, totalBodyChars: 0 }
     let skillFindings: Awaited<ReturnType<typeof analyzeSkills>> = []
+    let scanned: { name: string; body: string; base: string | undefined }[] = []
     if (registry !== undefined) {
       const summaries = await registry.list({ ...(cwd !== undefined ? { cwd } : {}), signal })
       const invocable = summaries.filter(summary => summary.invocation.modelInvocable)
-      const scanned: { name: string; body: string; base: string | undefined }[] = []
+      scanned = []
       for (const summary of invocable.slice(0, MAX_SCANNED_SKILLS)) {
         try {
           const definition = await registry.get(summary.name, { ...(cwd !== undefined ? { cwd } : {}), signal })
@@ -2032,10 +2583,289 @@ export default class PromptOptimizer extends Service {
       }
     }
     return {
-      ...(systemPromptStat !== undefined ? { systemPrompt: systemPromptStat } : {}),
+      sections,
+      systemPrompt: systemPromptStat,
+      scannedSkills: scanned,
       skills,
       findings: [...sectionFindings, ...skillFindings],
     }
+  }
+
+  /** Repairs pending a confirming call, keyed by session id. */
+  private readonly pendingContextFixes = new Map<string, PendingContextFix>()
+
+  /**
+   * Propose (or, with `confirm`, apply) one repair for a fixable context-doctor
+   * finding, in two phases mirroring {@link PromptOptimizer.distillSkill}. A
+   * preview call re-scans, verifies the finding still exists, and computes the
+   * proposal — deterministically for stale references, over one model round
+   * for duplicate merges; a confirming call runs no model round, backs every
+   * file it touches up to `.bak` (which the registry never lists), writes the
+   * repair, and returns a fresh scan. Skill repairs are writable only inside
+   * the distillation target directory — packaged skill trees are read-only,
+   * like the bundled role library — and system-prompt sections have no write
+   * API at all, so both degrade to advisory copy-only proposals.
+   * @param request - session, the finding's kind/subject/detail, and the phase selector.
+   * @param signal - caller cancellation.
+   * @returns the proposal on previews; the written repair plus fresh findings on confirms.
+   * @throws when the session is gone, the finding no longer scans, no storage
+   * backs the pending repair, a merge round fails validation, or a write fails.
+   */
+  async contextFix(request: PromptContextFixRequest, signal: AbortSignal): Promise<PromptContextFixResult> {
+    signal.throwIfAborted()
+    const session = this.ctx.sessions.get(request.sessionId)
+    if (session === undefined) {
+      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
+    }
+    if (!CONTEXT_FIX_KINDS.includes(request.kind)) {
+      fail('PROMPT_OPTIMIZER_BAD_CONTEXT_FIX_KIND', `prompt-optimizer: "${request.kind}" is not a fixable finding kind; expected one of ${CONTEXT_FIX_KINDS.join(', ')}`)
+    }
+    if (request.subject.trim() === '' || request.detail.trim() === '') {
+      fail('PROMPT_OPTIMIZER_BAD_CONTEXT_FIX_TARGET', 'prompt-optimizer: a repair needs the finding\'s non-empty subject and detail')
+    }
+
+    if (request.confirm === true) {
+      const pending = this.pendingContextFixes.get(request.sessionId)
+      if (pending === undefined || pending.kind !== request.kind || pending.subject !== request.subject) {
+        fail('PROMPT_OPTIMIZER_CONTEXT_FIX_NOT_PENDING', 'prompt-optimizer: confirm requires a preceding preview of this finding for this session')
+      }
+      const fs = this.ctx.get('fs')
+      if (fs === undefined || pending.targetFile === undefined) {
+        fail('PROMPT_OPTIMIZER_NO_FS', 'prompt-optimizer: no filesystem service is composed; add a dsh-fs implementation to write repairs')
+      }
+      try {
+        await this.writeWithBackup(fs, pending.targetFile, pending.proposal, signal)
+        if (pending.retire !== undefined) {
+          await this.writeWithBackup(fs, pending.retire.file, retiredSkillDefinition(pending.retire.retiredName, pending.retire.mergeInto), signal)
+        }
+      } catch (error) {
+        signal.throwIfAborted()
+        if (isTypedFailure(error)) throw error
+        fail('PROMPT_OPTIMIZER_CONTEXT_FIX_FAILED', `prompt-optimizer: writing the repair failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      this.pendingContextFixes.delete(request.sessionId)
+      appendPluginRecord(session, 'plugin:prompt-optimizer/context-fixed', {
+        kind: pending.kind,
+        subject: pending.subject,
+        bytes: Buffer.byteLength(pending.proposal, 'utf8'),
+      })
+      const rescanned = await this.scanContext(session, request.sessionId, signal)
+      return {
+        kind: pending.kind,
+        subject: pending.subject,
+        advisory: false,
+        proposal: pending.proposal,
+        targetFile: pending.targetFile,
+        findings: rescanned.findings,
+      }
+    }
+
+    // Preview: the repair can only target a finding a fresh scan still reports.
+    const scanned = await this.scanContext(session, request.sessionId, signal)
+    if (!scanned.findings.some(finding => finding.kind === request.kind && finding.subject === request.subject)) {
+      fail('PROMPT_OPTIMIZER_CONTEXT_FIX_FINDING_GONE', 'prompt-optimizer: a fresh scan no longer reports this finding; rescan the context and pick a current finding')
+    }
+
+    if (request.kind === 'stale-skill-reference') {
+      const reference = referenceOfDetail(request.detail)
+      const skill = scanned.scannedSkills.find(entry => entry.name === request.subject)
+      if (skill === undefined) {
+        fail('PROMPT_OPTIMIZER_CONTEXT_FIX_FINDING_GONE', 'prompt-optimizer: a fresh scan no longer reports this finding; rescan the context and pick a current finding')
+      }
+      const proposal = stripReference(skill.body, reference)
+      const fs = this.ctx.get('fs')
+      let replacement: string | undefined
+      if (fs !== undefined && skill.base !== undefined) {
+        try {
+          const listed = await fs.listDir(await fs.resolve(skill.base, { signal }), signal)
+          replacement = nearestExistingFile(reference, listed.filter(entry => entry.type === 'file').map(entry => entry.name))
+        } catch {
+          signal.throwIfAborted()
+        }
+      }
+      const targetFile = this.writableSkillFile(session, skill.base)
+      const spread: { replacement?: string; targetFile?: string } = {}
+      if (replacement !== undefined) spread.replacement = replacement
+      if (targetFile !== undefined) {
+        spread.targetFile = targetFile
+        this.pendingContextFixes.set(request.sessionId, {
+          kind: request.kind, subject: request.subject, proposal, targetFile, retire: undefined,
+        })
+      }
+      return { kind: request.kind, subject: request.subject, advisory: targetFile === undefined, proposal, ...spread }
+    }
+
+    if (request.kind === 'duplicate-skill') {
+      const { left, right } = splitPairSubject(request.subject)
+      const leftSkill = scanned.scannedSkills.find(entry => entry.name === left)
+      const rightSkill = scanned.scannedSkills.find(entry => entry.name === right)
+      if (leftSkill === undefined || rightSkill === undefined) {
+        fail('PROMPT_OPTIMIZER_CONTEXT_FIX_FINDING_GONE', 'prompt-optimizer: a fresh scan no longer reports this finding; rescan the context and pick a current finding')
+      }
+      const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+      const tier = classifyModelTier(route.provider, route.model)
+      let merged: string
+      try {
+        merged = plainMergeText(await this.streamRaw(session, {
+          route,
+          system: skillMergeSystemPrompt(),
+          input: skillMergeUserInput(leftSkill.body, rightSkill.body),
+          sessionId: request.sessionId,
+          tier,
+        }, signal))
+      } catch (error) {
+        signal.throwIfAborted()
+        if (isTypedFailure(error)) throw error
+        fail('PROMPT_OPTIMIZER_CONTEXT_FIX_FAILED', `prompt-optimizer: merging the duplicate skills failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      let canonical: string
+      try {
+        canonical = canonicalSkillName(parseSkillDefinition(merged).definition, left)
+      } catch (error) {
+        fail('PROMPT_OPTIMIZER_CONTEXT_FIX_INVALID', `prompt-optimizer: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (canonical.length > SKILL_MAX_CHARS) {
+        fail('PROMPT_OPTIMIZER_CONTEXT_FIX_INVALID', `prompt-optimizer: the merged skill definition exceeds the ${String(SKILL_MAX_CHARS)}-character cap`)
+      }
+      const leftTarget = this.writableSkillFile(session, leftSkill.base)
+      const rightTarget = this.writableSkillFile(session, rightSkill.base)
+      if (leftTarget === undefined || rightTarget === undefined) {
+        return { kind: request.kind, subject: request.subject, advisory: true, proposal: canonical }
+      }
+      this.pendingContextFixes.set(request.sessionId, {
+        kind: request.kind, subject: request.subject, proposal: canonical, targetFile: leftTarget,
+        retire: { file: rightTarget, retiredName: right, mergeInto: left },
+      })
+      return { kind: request.kind, subject: request.subject, advisory: false, proposal: canonical, targetFile: leftTarget }
+    }
+
+    // duplicate-section: advisory only — the assembled system prompt has no write-back API.
+    const { left, right } = splitPairSubject(request.subject)
+    const leftSection = scanned.sections.find(section => section.name === left)
+    const rightSection = scanned.sections.find(section => section.name === right)
+    if (leftSection === undefined || rightSection === undefined) {
+      fail('PROMPT_OPTIMIZER_CONTEXT_FIX_FINDING_GONE', 'prompt-optimizer: a fresh scan no longer reports this finding; rescan the context and pick a current finding')
+    }
+    const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
+    let merged: string
+    try {
+      merged = plainMergeText(await this.streamRaw(session, {
+        route,
+        system: sectionMergeSystemPrompt(),
+        input: sectionMergeUserInput(left, leftSection.text, right, rightSection.text),
+        sessionId: request.sessionId,
+        tier: classifyModelTier(route.provider, route.model),
+      }, signal))
+    } catch (error) {
+      signal.throwIfAborted()
+      if (isTypedFailure(error)) throw error
+      fail('PROMPT_OPTIMIZER_CONTEXT_FIX_FAILED', `prompt-optimizer: merging the duplicate sections failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (merged === '') {
+      fail('PROMPT_OPTIMIZER_CONTEXT_FIX_INVALID', 'prompt-optimizer: the merged section came back empty')
+    }
+    return { kind: request.kind, subject: request.subject, advisory: true, proposal: merged }
+  }
+
+  /**
+   * Write one file with a `.bak` backup of its current content — the registry
+   * never lists `.bak` files, so the backup leaves every catalog while the
+   * original stays recoverable.
+   * @param fs - filesystem service that resolves and writes.
+   * @param path - file path (unresolved) to rewrite.
+   * @param contents - full new contents.
+   * @param signal - caller cancellation.
+   */
+  private async writeWithBackup(fs: FileSystem, path: string, contents: string, signal: AbortSignal): Promise<void> {
+    const target = await fs.resolve(path, { signal })
+    const existing = await fs.readText(target, signal).catch(() => undefined)
+    if (existing !== undefined) {
+      await fs.writeText(await fs.resolve(`${path}.bak`, { signal }), existing, undefined, signal)
+    }
+    await fs.writeText(target, contents, undefined, signal)
+  }
+
+  /**
+   * Resolve the `SKILL.md` a repair may write, or undefined when the skill is
+   * not writable: repairs touch only skills inside the distillation target
+   * directory; packaged skill trees stay read-only, like the bundled roles.
+   * @param session - live session owning the working-directory fallback.
+   * @param base - the skill's own directory, when the registry reported one.
+   * @returns the writable `SKILL.md` path, or undefined for an advisory repair.
+   */
+  private writableSkillFile(session: Session, base: string | undefined): string | undefined {
+    if (base === undefined || this.ctx.get('fs') === undefined) return undefined
+    let root: string
+    try {
+      root = this.distillTargetDir(session)
+    } catch {
+      return undefined
+    }
+    return isWithin(base, root) ? `${base}/SKILL.md` : undefined
+  }
+
+  /**
+   * Dispatch one model round whose output is raw text rather than the
+   * optimization envelope, logging the request exactly like every other
+   * round. The repair merges share it.
+   * @param session - live Session that owns the request log.
+   * @param options - route, system prompt, user input, session id, and tier.
+   * @param signal - caller cancellation.
+   * @returns the complete trimmed response text.
+   * @throws on deadline, cancellation, a missing adapter, or an operational
+   * stream failure.
+   */
+  private async streamRaw(session: Session, options: {
+    readonly route: { readonly provider: string; readonly model: string }
+    readonly system: string
+    readonly input: string
+    readonly sessionId: SessionId
+    readonly tier: ModelTier
+  }, signal: AbortSignal): Promise<string> {
+    const messages: Message[] = [createUserMessage({
+      content: [{ type: 'text', text: options.input }],
+      source: { kind: 'dsh-prompt-optimizer' },
+    })]
+    using callDeadline = deadline(signal, this.config.timeoutMs, 'PROMPT_OPTIMIZER_TIMEOUT')
+    const maxTokens = this.config.maxOutputTokens
+    let call: Awaited<ReturnType<typeof this.ctx.llm.prepareCall>>
+    try {
+      call = await this.ctx.llm.prepareCall({ ...options.route, maxTokens }, callDeadline.signal)
+    } catch (error) {
+      callDeadline.signal.throwIfAborted()
+      if (error instanceof LlmError && error.code === 'NO_ADAPTER') {
+        fail('PROMPT_OPTIMIZER_NO_ADAPTER', noAdapterMessage(this.ctx, options.route.provider))
+      }
+      throw error
+    }
+    const llmOptions: GenerateOptions = {
+      ...call.config,
+      messages,
+      system: options.system,
+      sessionId: options.sessionId,
+      signal: callDeadline.signal,
+    }
+    appendPluginRecord(session, 'plugin:prompt-optimizer/llm-request', {
+      route: options.route,
+      system: options.system,
+      messages,
+      maxTokens,
+      inputBytes: Buffer.byteLength(options.input, 'utf8'),
+      previousAttempts: 0,
+      target: 'draft',
+      round: 1,
+      skillsHinted: 0,
+      tier: options.tier,
+    })
+    callDeadline.signal.throwIfAborted()
+    const assembler = new BlockAssembler()
+    for await (const chunk of call.stream(llmOptions)) {
+      callDeadline.signal.throwIfAborted()
+      assembler.push(chunk)
+    }
+    callDeadline.signal.throwIfAborted()
+    terminalFinish(assembler.finish)
+    return responseText(assembler.blocks()).trim()
   }
 
   /**
@@ -2067,13 +2897,22 @@ export default class PromptOptimizer extends Service {
     if (fs === undefined) {
       fail('PROMPT_OPTIMIZER_NO_FS', 'prompt-optimizer: no filesystem service is composed; add a dsh-fs implementation to write distilled skills')
     }
+    let evolving: { readonly name: string; readonly definition: string } | undefined
+    let evolvedConfirm: boolean | undefined
     let definition: string
     if (request.confirm === true) {
-      definition = this.pendingDistills.get(request.sessionId) ?? fail('PROMPT_OPTIMIZER_DISTILL_NOT_PENDING', 'prompt-optimizer: confirm requires a preceding preview for this session')
+      const pending = this.pendingDistills.get(request.sessionId) ?? fail('PROMPT_OPTIMIZER_DISTILL_NOT_PENDING', 'prompt-optimizer: confirm requires a preceding preview for this session')
+      definition = pending.definition
+      evolvedConfirm = pending.evolved
     } else {
+      if (request.evolveOf !== undefined) {
+        evolving = await this.loadSkillForEvolution(fs, targetDir, request.evolveOf, signal)
+      }
       const route = resolveRoute(this.ctx, this.config, session, defaultModelRoute(this.ctx))
       const messages: Message[] = [createUserMessage({
-        content: [{ type: 'text', text: distillationUserInput(request.draft, request.optimized, clarifications) }],
+        content: [{ type: 'text', text: evolving === undefined
+          ? distillationUserInput(request.draft, request.optimized, clarifications)
+          : skillEvolutionUserInput(evolving.definition, request.draft, request.optimized, clarifications) }],
         source: { kind: 'dsh-prompt-optimizer' },
       })]
       try {
@@ -2091,7 +2930,7 @@ export default class PromptOptimizer extends Service {
         const llmOptions: GenerateOptions = {
           ...call.config,
           messages,
-          system: distillationSystemPrompt(),
+          system: evolving === undefined ? distillationSystemPrompt() : skillEvolutionSystemPrompt(),
           sessionId: request.sessionId,
           signal: callDeadline.signal,
         }
@@ -2110,6 +2949,9 @@ export default class PromptOptimizer extends Service {
         fail('PROMPT_OPTIMIZER_DISTILL_FAILED', `prompt-optimizer: distilling the round failed: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
+    if (evolving !== undefined) {
+      definition = canonicalSkillName(definition, evolving.name)
+    }
     let parsed: ReturnType<typeof parseSkillDefinition>
     try {
       parsed = parseSkillDefinition(definition)
@@ -2120,7 +2962,7 @@ export default class PromptOptimizer extends Service {
       fail('PROMPT_OPTIMIZER_DISTILL_INVALID', `prompt-optimizer: the distilled skill definition exceeds the ${String(SKILL_MAX_CHARS)}-character cap`)
     }
     if (request.confirm !== true) {
-      this.pendingDistills.set(request.sessionId, definition)
+      this.pendingDistills.set(request.sessionId, { definition, evolved: evolving !== undefined })
       return {
         name: parsed.name,
         description: parsed.description,
@@ -2144,7 +2986,8 @@ export default class PromptOptimizer extends Service {
     this.pendingDistills.delete(request.sessionId)
     const bytes = Buffer.byteLength(definition, 'utf8')
     appendPluginRecord(session, 'plugin:prompt-optimizer/distilled', { name: parsed.name, targetDir, bytes })
-    await this.recordMetric('distilled', { provider: '', model: '' }, 'standard', 1)
+    await this.recordMetric(evolvedConfirm === true ? 'evolved' : 'distilled', { provider: '', model: '' }, 'standard', 1)
+    await this.recordSkillLink(request.draft, parsed.name, targetDir)
     return { name: parsed.name, description: parsed.description, bytes, targetDir }
   }
 
@@ -2183,6 +3026,9 @@ export default class PromptOptimizer extends Service {
       candidatesRounds: rowsOf('candidates-generated'),
       judgedRounds: judgeRows.length,
       distills: rowsOf('distilled'),
+      evolutions: rowsOf('evolved'),
+      evalRuns: rowsOf('eval-run'),
+      evalWins: sumOf('eval-win'),
       judgeAverage: judgeRows.length === 0
         ? null
         : judgeRows.reduce((total, row) => total + row.count, 0) / judgeRows.length,

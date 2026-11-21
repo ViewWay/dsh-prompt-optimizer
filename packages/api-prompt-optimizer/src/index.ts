@@ -7,8 +7,12 @@ import type {
   PromptCandidatesResult,
   PromptContextCheckRequest,
   PromptContextCheckResult,
+  PromptContextFixRequest,
+  PromptContextFixResult,
   PromptDistillRequest,
   PromptDistillResult,
+  PromptEvalRunRequest,
+  PromptEvalRunResult,
   PromptInterviewRequest,
   PromptInterviewResult,
   PromptLibraryDeleteRequest,
@@ -189,6 +193,47 @@ export default class PromptOptimizerController extends TypertRemoteService {
       signal.throwIfAborted()
       const reason = error instanceof Error ? error.message : String(error)
       throw new RemoteError('prompt-optimizer/context-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Propose (or, with `confirm`, apply) one repair for a fixable context-doctor
+   * finding through the capability service: deterministic stale-reference
+   * repairs and one-round merge proposals, written only on confirm.
+   * @param request - session, the finding's kind/subject/detail, and the phase selector.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   * @returns the proposal on previews; the written repair plus fresh findings on confirms.
+   */
+  @Remote
+  async contextFix(request: PromptContextFixRequest, signal: AbortSignal): Promise<PromptContextFixResult> {
+    signal.throwIfAborted()
+    try {
+      return await this.ctx.promptOptimizer.contextFix(request, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/context-fix-failed', reason, { reason }, { cause: error })
+    }
+  }
+
+  /**
+   * Run the bundled evidence pack through the capability service: every
+   * sample gets one rewrite round plus one judge round scoring the raw draft
+   * against the rewrite, so the settings card shows whether optimization
+   * measurably helps the current route.
+   * @param request - session and optional sample count.
+   * @param signal - Client cancellation or Remote contribution disposal.
+   * @returns per-sample outcomes with the improved and judged totals.
+   */
+  @Remote
+  async runEvalPack(request: PromptEvalRunRequest, signal: AbortSignal): Promise<PromptEvalRunResult> {
+    signal.throwIfAborted()
+    try {
+      return await this.ctx.promptOptimizer.runEvalPack(request, signal)
+    } catch (error) {
+      signal.throwIfAborted()
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new RemoteError('prompt-optimizer/eval-failed', reason, { reason }, { cause: error })
     }
   }
 

@@ -9,8 +9,12 @@ import type {
   PromptCandidatesResult,
   PromptContextCheckRequest,
   PromptContextCheckResult,
+  PromptContextFixRequest,
+  PromptContextFixResult,
   PromptDistillRequest,
   PromptDistillResult,
+  PromptEvalRunRequest,
+  PromptEvalRunResult,
   PromptInterviewRequest,
   PromptInterviewResult,
   PromptLibraryDeleteRequest,
@@ -32,6 +36,7 @@ import type {
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace$70726f6d70744f7074696d697a6572 {
     contextCheck: (request: PromptContextCheckRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptContextCheckResult>>
+    contextFix: (request: PromptContextFixRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptContextFixResult>>
     deletePrompt: (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     distillSkill: (request: PromptDistillRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptDistillResult>>
     evolveRole: (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
@@ -43,11 +48,13 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     optimizeCandidates: (request: PromptCandidatesRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptCandidatesResult>>
     recommendRoles: (request: PromptRoleRecommendRequest, signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleRecommendation[]>>
     reportMetric: (request: PromptMetricReportRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
+    runEvalPack: (request: PromptEvalRunRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptEvalRunResult>>
     savePrompt: (request: PromptLibrarySaveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptLibraryEntry>>
     verify: (request: PromptVerifyRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptVerifyResult>>
   }
   interface TypertRemoteMap {
     'promptOptimizer/contextCheck': (request: PromptContextCheckRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptContextCheckResult>>
+    'promptOptimizer/contextFix': (request: PromptContextFixRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptContextFixResult>>
     'promptOptimizer/deletePrompt': (request: PromptLibraryDeleteRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
     'promptOptimizer/distillSkill': (request: PromptDistillRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptDistillResult>>
     'promptOptimizer/evolveRole': (request: PromptRoleEvolveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptRoleEvolveResult>>
@@ -59,6 +66,7 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'promptOptimizer/optimizeCandidates': (request: PromptCandidatesRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptCandidatesResult>>
     'promptOptimizer/recommendRoles': (request: PromptRoleRecommendRequest, signal?: AbortSignal) => Promise<RemoteResult<readonly PromptRoleRecommendation[]>>
     'promptOptimizer/reportMetric': (request: PromptMetricReportRequest, signal?: AbortSignal) => Promise<RemoteResult<void>>
+    'promptOptimizer/runEvalPack': (request: PromptEvalRunRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptEvalRunResult>>
     'promptOptimizer/savePrompt': (request: PromptLibrarySaveRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptLibraryEntry>>
     'promptOptimizer/verify': (request: PromptVerifyRequest, signal?: AbortSignal) => Promise<RemoteResult<PromptVerifyResult>>
   }
@@ -107,6 +115,28 @@ const _contextCheck_result = () => (_contextCheck_result$value ??= z.object({
     'detail': z.string().readonly().describe('Short English detail line; the client renders the kind localized beside it.'),
   })).readonly().describe('Findings in scan order; empty when the context is clean.'),
 }))
+let _contextFix_parameter_0$value
+const _contextFix_parameter_0 = () => (_contextFix_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session whose scoped context the finding came from.'),
+  'kind': z.union([z.literal('stale-skill-reference'), z.literal('duplicate-skill'), z.literal('duplicate-section')]).readonly().describe('Fixable finding kind the request targets.'),
+  'subject': z.string().readonly().describe('Finding subject exactly as the scan reported it.'),
+  'detail': z.string().readonly().describe('Finding detail exactly as the scan reported it.'),
+  'confirm': z.boolean().readonly().optional().describe('True commits the pending repair for this session and writes; absent/false returns a proposal without writing.'),
+}))
+let _contextFix_result$value
+const _contextFix_result = () => (_contextFix_result$value ??= z.object({
+  'kind': z.union([z.literal('stale-skill-reference'), z.literal('duplicate-skill'), z.literal('duplicate-section')]).readonly().describe('Fixable finding kind the repair addresses.'),
+  'subject': z.string().readonly().describe('Finding subject the repair addresses.'),
+  'advisory': z.boolean().readonly().describe('True when no write path exists for this finding: the proposal is copy-only advice.'),
+  'proposal': z.string().readonly().describe('Proposed replacement text: the repaired skill body, the merged skill definition, or the merged section text.'),
+  'replacement': z.string().readonly().optional().describe('Existing near-name file a stale reference could be rewritten to; present only when one plausibly matches.'),
+  'targetFile': z.string().readonly().optional().describe('File a confirming call rewrites; present exactly when the repair is writable.'),
+  'findings': z.array(z.object({
+    'kind': z.union([z.literal('oversized-section'), z.literal('duplicate-section'), z.literal('oversized-skill'), z.literal('duplicate-skill'), z.literal('stale-skill-reference')]).readonly().describe('What the finding is about.'),
+    'subject': z.string().readonly().describe('Section name, skill name, or `left ~= right` pair the finding is about.'),
+    'detail': z.string().readonly().describe('Short English detail line; the client renders the kind localized beside it.'),
+  })).readonly().optional().describe('Fresh scan findings after a confirmed write; present only on confirm results.'),
+}))
 let _deletePrompt_parameter_0$value
 const _deletePrompt_parameter_0 = () => (_deletePrompt_parameter_0$value ??= z.object({
   'sessionId': z.string().readonly().describe('Session requesting the deletion.'),
@@ -123,6 +153,7 @@ const _distillSkill_parameter_0 = () => (_distillSkill_parameter_0$value ??= z.o
     'question': z.string().readonly().describe('The question text exactly as the interview round asked it.'),
     'answer': z.string().readonly().describe('The user\'s answer, verbatim.'),
   })).readonly().optional().describe('Interview answers the round carried; they condition what the skill must preserve.'),
+  'evolveOf': z.string().readonly().optional().describe('Kebab-case name of an existing distilled skill this round evolves instead of distilling a fresh one; the confirm overwrites that skill\'s file.'),
   'confirm': z.boolean().readonly().optional().describe('True commits the pending preview for this session and writes the skill file; absent/false returns a preview without writing.'),
 }))
 let _distillSkill_result$value
@@ -153,6 +184,7 @@ const _interview_parameter_0 = () => (_interview_parameter_0$value ??= z.object(
   'sessionId': z.string().readonly().describe('Session whose draft is being interviewed; owns the request log and route fallback.'),
   'text': z.string().readonly().describe('Complete current draft text, exactly as the composer holds it.'),
   'language': z.string().readonly().optional().describe('Self-describing name of the language the questions must be written in (for example `中文`); absent keeps the draft\'s language.'),
+  'mode': z.literal('goal').readonly().optional().describe('`goal` pins the first question to the observable definition of done (acceptance-first interview).'),
 }))
 let _interview_result$value
 const _interview_result = () => (_interview_result$value ??= z.object({
@@ -177,6 +209,7 @@ const _interview_parameter_0_strict = () => (_interview_parameter_0_strict$value
   'sessionId': z.string().readonly(),
   'text': z.string().readonly(),
   'language': z.string().readonly().optional(),
+  'mode': z.literal('goal').readonly().optional(),
 }))
 let _optimize_parameter_0$value
 const _optimize_parameter_0 = () => (_optimize_parameter_0$value ??= z.object({
@@ -192,6 +225,7 @@ const _optimize_parameter_0 = () => (_optimize_parameter_0$value ??= z.object({
     'question': z.string().readonly().describe('The question text exactly as the interview round asked it.'),
     'answer': z.string().readonly().describe('The user\'s answer, verbatim.'),
   })).readonly().optional().describe('Interview answers to fold into the rewrite as first-class requirements; absent for a plain round.'),
+  'goalCriteria': z.array(z.string()).readonly().optional().describe('Acceptance criteria the user defined up front (goal mode); the rewrite must satisfy and restate every one.'),
 }))
 let _optimize_result$value
 const _optimize_result = () => (_optimize_result$value ??= z.object({
@@ -212,6 +246,9 @@ const _optimize_result = () => (_optimize_result$value ??= z.object({
   'skipped': z.boolean().readonly().optional().describe('True when the precheck declined to rewrite; `optimizedText` then equals the draft verbatim.'),
   'skipReason': z.literal('reasoning-short-clear').readonly().optional().describe('Stable reason the precheck declined; present exactly when `skipped` is true.'),
   'suggestDistill': z.boolean().readonly().optional().describe('True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill.'),
+  'suggestEvolve': z.object({
+    'name': z.string().readonly().describe('Kebab-case name of the linked distilled skill the panel offers to update.'),
+  }).readonly().optional().describe('Present when this repeat draft already has a linked distilled skill: the panel then offers updating that skill instead of distilling a fresh one.'),
   'systemPromptStale': z.object({
     'from': z.string().readonly().describe('Provider/model id the standing system prompt was tuned on.'),
     'to': z.string().readonly().describe('Provider/model id of the current route.'),
@@ -238,6 +275,7 @@ const _optimizeCandidates_parameter_0 = () => (_optimizeCandidates_parameter_0$v
     'question': z.string().readonly().describe('The question text exactly as the interview round asked it.'),
     'answer': z.string().readonly().describe('The user\'s answer, verbatim.'),
   })).readonly().optional().describe('Interview answers folded into every candidate as first-class requirements; absent for a plain round.'),
+  'goalCriteria': z.array(z.string()).readonly().optional().describe('Acceptance criteria the user defined up front (goal mode); every candidate must satisfy and restate them.'),
 }))
 let _optimizeCandidates_result$value
 const _optimizeCandidates_result = () => (_optimizeCandidates_result$value ??= z.object({
@@ -269,6 +307,9 @@ const _optimizeCandidates_result = () => (_optimizeCandidates_result$value ??= z
   'skipped': z.boolean().readonly().optional().describe('True when the precheck declined the rounds; `candidates` is then empty.'),
   'skipReason': z.literal('reasoning-short-clear').readonly().optional().describe('Stable reason the precheck declined; present exactly when `skipped` is true.'),
   'suggestDistill': z.boolean().readonly().optional().describe('True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill.'),
+  'suggestEvolve': z.object({
+    'name': z.string().readonly().describe('Kebab-case name of the linked distilled skill the panel offers to update.'),
+  }).readonly().optional().describe('Present when this repeat draft already has a linked distilled skill: the panel then offers updating that skill instead of distilling a fresh one.'),
   'systemPromptStale': z.object({
     'from': z.string().readonly().describe('Provider/model id the standing system prompt was tuned on.'),
     'to': z.string().readonly().describe('Provider/model id of the current route.'),
@@ -301,6 +342,11 @@ const _reportMetric_parameter_0 = () => (_reportMetric_parameter_0$value ??= z.o
   'provider': z.string().readonly().describe('Exact provider route of the round the decision is about.'),
   'model': z.string().readonly().describe('Exact model id of the round the decision is about.'),
   'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional().describe('Capability tier of that route; absent stores `standard`.'),
+  'precedent': z.object({
+    'draft': z.string().readonly().describe('Complete draft text the adopted round optimized; the host derives the domain from it.'),
+    'optimizedText': z.string().readonly().describe('Complete adopted optimized text to persist as the precedent.'),
+    'judgeTotal': z.number().readonly().optional().describe('Judge total (0–30) of the adopted candidate when the round was a judged candidates round.'),
+  }).readonly().optional().describe('Materials of the adopted result, persisted as a same-domain precedent for later rounds; present only on adopted reports, and only while precedents are enabled.'),
 }))
 let _reportMetric_result$value
 const _reportMetric_result = () => (_reportMetric_result$value ??= z.void())
@@ -314,9 +360,49 @@ const _listMetrics_result = () => (_listMetrics_result$value ??= z.object({
   'clarifiedRounds': z.number().readonly().describe('Rewrite rounds that carried interview answers.'),
   'verifyPassed': z.number().readonly().describe('Acceptance-check commands that exited 0.'),
   'verifyFailed': z.number().readonly().describe('Acceptance-check commands that exited nonzero, timed out, or died.'),
+  'candidatesRounds': z.number().readonly().describe('Candidate rounds run: each generated N candidates plus one judge pass.'),
+  'judgedRounds': z.number().readonly().describe('Candidate rounds whose judge produced a recommended score.'),
+  'distills': z.number().readonly().describe('Completed rounds distilled into a durable agent skill file.'),
+  'evolutions': z.number().readonly().describe('Linked skills updated by an evolution round.'),
+  'evalRuns': z.number().readonly().describe('Evidence-pack runs, each rewriting and judging a handful of bundled samples.'),
+  'evalWins': z.number().readonly().describe('Evidence samples whose optimized rewrite beat the raw draft under the judge.'),
+  'judgeAverage': z.number().readonly().nullable().describe('Mean total score (0–30) of the recommended candidate across judged rounds; null before any.'),
   'adoptionRate': z.number().readonly().nullable().describe('`adopted / (adopted + rejected)` over the aggregated rows; null before either kind exists.'),
   'verifyPassRate': z.number().readonly().nullable().describe('`verifyPassed / (verifyPassed + verifyFailed)`; null before either kind exists.'),
   'rows': z.number().readonly().describe('Metric rows the aggregate considered, oldest dropped first.'),
+}))
+let _runEvalPack_parameter_0$value
+const _runEvalPack_parameter_0 = () => (_runEvalPack_parameter_0$value ??= z.object({
+  'sessionId': z.string().readonly().describe('Session whose route the run dispatches on; owns the request log.'),
+  'count': z.number().readonly().optional().describe('How many samples to run; default 3, allowed 1–6.'),
+}))
+let _runEvalPack_result$value
+const _runEvalPack_result = () => (_runEvalPack_result$value ??= z.object({
+  'samples': z.array(z.object({
+    'id': z.string().readonly().describe('Stable sample id the outcome belongs to.'),
+    'domain': z.string().readonly().describe('Sample\'s domain bucket.'),
+    'rawTotal': z.number().readonly().optional().describe('Judge total (0–30) of the raw draft as a prompt; absent when the judge failed.'),
+    'optimizedTotal': z.number().readonly().optional().describe('Judge total of the optimized rewrite; absent when the judge failed.'),
+    'improved': z.boolean().readonly().describe('True when the optimized total beat the raw total; false on ties, losses, and failed judges.'),
+  })).readonly().describe('Per-sample outcomes in pack order.'),
+  'improved': z.number().readonly().describe('Samples whose optimized total beat the raw total.'),
+  'judged': z.number().readonly().describe('Samples the judge scored on both sides.'),
+  'provider': z.string().readonly().describe('Exact provider route the run dispatched on.'),
+  'model': z.string().readonly().describe('Exact model id the run dispatched on.'),
+  'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional().describe('Capability tier of the route.'),
+  'usage': z.object({
+    'inputTokens': z.number(),
+    'outputTokens': z.number(),
+    'totalTokens': z.number().optional(),
+    'cacheReadTokens': z.number().optional(),
+    'cacheWriteTokens': z.number().optional(),
+    'reasoningTokens': z.number().optional(),
+  }).readonly().optional().describe('Usage summed over every round the run dispatched; absent until one arrives.'),
+}))
+let _runEvalPack_parameter_0_strict$value
+const _runEvalPack_parameter_0_strict = () => (_runEvalPack_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+  'count': z.number().readonly().optional(),
 }))
 let _savePrompt_parameter_0$value
 const _savePrompt_parameter_0 = () => (_savePrompt_parameter_0$value ??= z.object({
@@ -350,6 +436,14 @@ let _contextCheck_parameter_0_strict$value
 const _contextCheck_parameter_0_strict = () => (_contextCheck_parameter_0_strict$value ??= z.strictObject({
   'sessionId': z.string().readonly(),
 }))
+let _contextFix_parameter_0_strict$value
+const _contextFix_parameter_0_strict = () => (_contextFix_parameter_0_strict$value ??= z.strictObject({
+  'sessionId': z.string().readonly(),
+  'kind': z.union([z.literal('stale-skill-reference'), z.literal('duplicate-skill'), z.literal('duplicate-section')]).readonly(),
+  'subject': z.string().readonly(),
+  'detail': z.string().readonly(),
+  'confirm': z.boolean().readonly().optional(),
+}))
 let _deletePrompt_parameter_0_strict$value
 const _deletePrompt_parameter_0_strict = () => (_deletePrompt_parameter_0_strict$value ??= z.strictObject({
   'sessionId': z.string().readonly(),
@@ -364,6 +458,7 @@ const _distillSkill_parameter_0_strict = () => (_distillSkill_parameter_0_strict
     'question': z.string().readonly(),
     'answer': z.string().readonly(),
   })).readonly().optional(),
+  'evolveOf': z.string().readonly().optional(),
   'confirm': z.boolean().readonly().optional(),
 }))
 let _evolveRole_parameter_0_strict$value
@@ -401,6 +496,11 @@ const _reportMetric_parameter_0_strict = () => (_reportMetric_parameter_0_strict
   'provider': z.string().readonly(),
   'model': z.string().readonly(),
   'tier': z.union([z.literal('reasoning'), z.literal('local-small'), z.literal('standard')]).readonly().optional(),
+  'precedent': z.object({
+    'draft': z.string().readonly(),
+    'optimizedText': z.string().readonly(),
+    'judgeTotal': z.number().readonly().optional(),
+  }).readonly().optional(),
 }))
 let _savePrompt_parameter_0_strict$value
 const _savePrompt_parameter_0_strict = () => (_savePrompt_parameter_0_strict$value ??= z.strictObject({
@@ -421,6 +521,7 @@ const _optimizeCandidates_parameter_0_strict = () => (_optimizeCandidates_parame
     'question': z.string().readonly(),
     'answer': z.string().readonly(),
   })).readonly().optional(),
+  'goalCriteria': z.array(z.string()).readonly().optional(),
 }))
 let _verify_parameter_0_strict$value
 const _verify_parameter_0_strict = () => (_verify_parameter_0_strict$value ??= z.strictObject({
@@ -464,6 +565,72 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         jsonSchema: { type: 'object', properties: { systemPrompt: { type: 'object', properties: { totalChars: { type: 'number' }, estimatedTokens: { type: 'number' }, sections: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, chars: { type: 'number' }, share: { type: 'number' } }, required: ['name', 'chars', 'share'], additionalProperties: true } } }, required: ['totalChars', 'estimatedTokens', 'sections'], additionalProperties: true }, skills: { type: 'object', properties: { count: { type: 'number' }, modelInvocable: { type: 'number' }, scannedBodies: { type: 'number' }, totalBodyChars: { type: 'number' } }, required: ['count', 'modelInvocable', 'scannedBodies', 'totalBodyChars'], additionalProperties: true }, findings: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string', enum: ['oversized-section', 'duplicate-section', 'oversized-skill', 'duplicate-skill', 'stale-skill-reference'] }, subject: { type: 'string' }, detail: { type: 'string' } }, required: ['kind', 'subject', 'detail'], additionalProperties: true } } }, required: ['skills', 'findings'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 176, column: 9 },
+    },
+    'promptOptimizer/contextFix': {
+      service: 'promptOptimizerController',
+      description: 'Propose (or, with `confirm`, apply) one repair for a fixable context-doctor finding through the capability service: deterministic stale-reference repairs and one-round merge proposals, written only on confirm.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'session, the finding\'s kind/subject/detail, and the phase selector.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptContextFixRequest',
+            create: _contextFix_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, kind: { type: 'string', enum: ['stale-skill-reference', 'duplicate-skill', 'duplicate-section'] }, subject: { type: 'string' }, detail: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['sessionId', 'kind', 'subject', 'detail'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptContextFixRequest',
+            create: _contextFix_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, kind: { type: 'string', enum: ['stale-skill-reference', 'duplicate-skill', 'duplicate-section'] }, subject: { type: 'string' }, detail: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['sessionId', 'kind', 'subject', 'detail'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptContextFixResult',
+        create: _contextFix_result,
+        description: 'the repair proposal on previews; the written repair plus fresh findings on confirms.',
+        jsonSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['stale-skill-reference', 'duplicate-skill', 'duplicate-section'] }, subject: { type: 'string' }, advisory: { type: 'boolean' }, proposal: { type: 'string' }, replacement: { type: 'string' }, targetFile: { type: 'string' }, findings: { type: 'array', items: { type: 'object', properties: { kind: { type: 'string', enum: ['oversized-section', 'duplicate-section', 'oversized-skill', 'duplicate-skill', 'stale-skill-reference'] }, subject: { type: 'string' }, detail: { type: 'string' } }, required: ['kind', 'subject', 'detail'], additionalProperties: true } } }, required: ['kind', 'subject', 'advisory', 'proposal'], additionalProperties: true },
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 194, column: 9 },
+    },
+    'promptOptimizer/runEvalPack': {
+      service: 'promptOptimizerController',
+      description: 'Run the bundled evidence pack through the capability service: every sample gets one rewrite round plus one judge round scoring the raw draft against the rewrite, so the settings card shows whether optimization measurably helps the current route.',
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: 'request',
+          description: 'session and optional sample count.',
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptEvalRunRequest',
+            create: _runEvalPack_parameter_0,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, count: { type: 'number' } }, required: ['sessionId'], additionalProperties: true },
+          },
+          strictCodec: {
+            mode: 'strict',
+            typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptEvalRunRequest',
+            create: _runEvalPack_parameter_0_strict,
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, count: { type: 'number' } }, required: ['sessionId'], additionalProperties: false },
+          },
+        },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: {
+        mode: 'strict',
+        typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptEvalRunResult',
+        create: _runEvalPack_result,
+        description: 'per-sample outcomes with the improved and judged totals.',
+        jsonSchema: { type: 'object', properties: { samples: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, domain: { type: 'string' }, rawTotal: { type: 'number' }, optimizedTotal: { type: 'number' }, improved: { type: 'boolean' } }, required: ['id', 'domain', 'improved'], additionalProperties: true } }, improved: { type: 'number' }, judged: { type: 'number' }, provider: { type: 'string' }, model: { type: 'string' }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['samples', 'improved', 'judged', 'provider', 'model'], additionalProperties: true },
+      },
+      sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 214, column: 9 },
     },
     'promptOptimizer/deletePrompt': {
       service: 'promptOptimizerController',
@@ -510,13 +677,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptDistillRequest',
             create: _distillSkill_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, confirm: { type: 'boolean' } }, required: ['sessionId', 'draft', 'optimized'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, evolveOf: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['sessionId', 'draft', 'optimized'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptDistillRequest',
             create: _distillSkill_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, confirm: { type: 'boolean' } }, required: ['sessionId', 'draft', 'optimized'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, draft: { type: 'string' }, optimized: { type: 'string' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, evolveOf: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['sessionId', 'draft', 'optimized'], additionalProperties: false },
           },
         },
       ],
@@ -576,13 +743,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptInterviewRequest',
             create: _interview_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, language: { type: 'string' } }, required: ['sessionId', 'text'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, language: { type: 'string' }, mode: { type: 'string', enum: ['goal'] } }, required: ['sessionId', 'text'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptInterviewRequest',
             create: _interview_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, language: { type: 'string' } }, required: ['sessionId', 'text'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, language: { type: 'string' }, mode: { type: 'string', enum: ['goal'] } }, required: ['sessionId', 'text'], additionalProperties: false },
           },
         },
       ],
@@ -607,7 +774,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptMetricsSummary',
         create: _listMetrics_result,
         description: 'decision counts, question totals, and adoption/verify rates.',
-        jsonSchema: { type: 'object', properties: { adopted: { type: 'number' }, rejected: { type: 'number' }, declined: { type: 'number' }, declineOverridden: { type: 'number' }, interviewQuestions: { type: 'number' }, clarifiedRounds: { type: 'number' }, verifyPassed: { type: 'number' }, verifyFailed: { type: 'number' }, adoptionRate: { type: ['number', 'null'] }, verifyPassRate: { type: ['number', 'null'] }, rows: { type: 'number' } }, required: ['adopted', 'rejected', 'declined', 'declineOverridden', 'interviewQuestions', 'clarifiedRounds', 'verifyPassed', 'verifyFailed', 'adoptionRate', 'verifyPassRate', 'rows'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { adopted: { type: 'number' }, rejected: { type: 'number' }, declined: { type: 'number' }, declineOverridden: { type: 'number' }, interviewQuestions: { type: 'number' }, clarifiedRounds: { type: 'number' }, verifyPassed: { type: 'number' }, verifyFailed: { type: 'number' }, candidatesRounds: { type: 'number' }, judgedRounds: { type: 'number' }, distills: { type: 'number' }, evolutions: { type: 'number' }, evalRuns: { type: 'number' }, evalWins: { type: 'number' }, judgeAverage: { type: ['number', 'null'] }, adoptionRate: { type: ['number', 'null'] }, verifyPassRate: { type: ['number', 'null'] }, rows: { type: 'number' } }, required: ['adopted', 'rejected', 'declined', 'declineOverridden', 'interviewQuestions', 'clarifiedRounds', 'verifyPassed', 'verifyFailed', 'candidatesRounds', 'judgedRounds', 'distills', 'evolutions', 'evalRuns', 'evalWins', 'judgeAverage', 'adoptionRate', 'verifyPassRate', 'rows'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 99, column: 9 },
     },
@@ -654,13 +821,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } } }, required: ['sessionId', 'text'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, goalCriteria: { type: 'array', items: { type: 'string' } } }, required: ['sessionId', 'text'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeRequest',
             create: _optimize_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } } }, required: ['sessionId', 'text'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, previousAttempts: { type: 'array', items: { type: 'string' } }, target: { type: 'string', enum: ['draft', 'system'] }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, goalCriteria: { type: 'array', items: { type: 'string' } } }, required: ['sessionId', 'text'], additionalProperties: false },
           },
         },
       ],
@@ -670,7 +837,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptOptimizeResult',
         create: _optimize_result,
         description: 'the parsed optimization result for preview.',
-        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, suggestDistill: { type: 'boolean' }, systemPromptStale: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: true }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, critique: { type: 'array', items: { type: 'string' } }, provider: { type: 'string' }, model: { type: 'string' }, role: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, suggestDistill: { type: 'boolean' }, suggestEvolve: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'], additionalProperties: true }, systemPromptStale: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: true }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['optimizedText', 'changes', 'acceptance', 'provider', 'model'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 43, column: 9 },
     },
@@ -687,13 +854,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptCandidatesRequest',
             create: _optimizeCandidates_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, count: { type: 'number' }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } } }, required: ['sessionId', 'text'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, count: { type: 'number' }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, goalCriteria: { type: 'array', items: { type: 'string' } } }, required: ['sessionId', 'text'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptCandidatesRequest',
             create: _optimizeCandidates_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, count: { type: 'number' }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } } }, required: ['sessionId', 'text'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, text: { type: 'string' }, count: { type: 'number' }, role: { type: 'string' }, language: { type: 'string' }, direction: { type: 'string', enum: ['concise', 'detailed', 'technical', 'structured', 'acceptance'] }, force: { type: 'boolean' }, clarifications: { type: 'array', items: { type: 'object', properties: { question: { type: 'string' }, answer: { type: 'string' } }, required: ['question', 'answer'], additionalProperties: true } }, goalCriteria: { type: 'array', items: { type: 'string' } } }, required: ['sessionId', 'text'], additionalProperties: false },
           },
         },
       ],
@@ -703,7 +870,7 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
         typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptCandidatesResult',
         create: _optimizeCandidates_result,
         description: 'the scored candidates with the recommended index.',
-        jsonSchema: { type: 'object', properties: { candidates: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, scores: { type: 'object', properties: { faithfulness: { type: 'number' }, completeness: { type: 'number' }, clarity: { type: 'number' } }, required: ['faithfulness', 'completeness', 'clarity'], additionalProperties: true }, total: { type: 'number' }, pareto: { type: 'boolean' }, recommended: { type: 'boolean' } }, required: ['label', 'optimizedText', 'changes', 'acceptance', 'pareto', 'recommended'], additionalProperties: true } }, recommended: { type: 'number' }, judgeFailed: { type: 'boolean' }, judgeError: { type: 'string' }, provider: { type: 'string' }, model: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, suggestDistill: { type: 'boolean' }, systemPromptStale: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: true }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['candidates', 'recommended', 'provider', 'model'], additionalProperties: true },
+        jsonSchema: { type: 'object', properties: { candidates: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, optimizedText: { type: 'string' }, changes: { type: 'array', items: { type: 'string' } }, acceptance: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['mechanical', 'llm'] }, commandTemplate: { type: 'string' } }, required: ['text', 'kind'], additionalProperties: true } }, scores: { type: 'object', properties: { faithfulness: { type: 'number' }, completeness: { type: 'number' }, clarity: { type: 'number' } }, required: ['faithfulness', 'completeness', 'clarity'], additionalProperties: true }, total: { type: 'number' }, pareto: { type: 'boolean' }, recommended: { type: 'boolean' } }, required: ['label', 'optimizedText', 'changes', 'acceptance', 'pareto', 'recommended'], additionalProperties: true } }, recommended: { type: 'number' }, judgeFailed: { type: 'boolean' }, judgeError: { type: 'string' }, provider: { type: 'string' }, model: { type: 'string' }, skills: { type: 'array', items: { type: 'string' } }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, skipped: { type: 'boolean' }, skipReason: { type: 'string', enum: ['reasoning-short-clear'] }, suggestDistill: { type: 'boolean' }, suggestEvolve: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'], additionalProperties: true }, systemPromptStale: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: true }, usage: { type: 'object', properties: { inputTokens: { type: 'number' }, outputTokens: { type: 'number' }, totalTokens: { type: 'number' }, cacheReadTokens: { type: 'number' }, cacheWriteTokens: { type: 'number' }, reasoningTokens: { type: 'number' } }, required: ['inputTokens', 'outputTokens'], additionalProperties: true } }, required: ['candidates', 'recommended', 'provider', 'model'], additionalProperties: true },
       },
       sourceLocation: { file: 'packages/api-prompt-optimizer/src/index.ts', line: 62, column: 9 },
     },
@@ -753,13 +920,13 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptMetricReportRequest',
             create: _reportMetric_parameter_0,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, kind: { type: 'string', enum: ['adopted', 'rejected', 'decline-overridden'] }, provider: { type: 'string' }, model: { type: 'string' }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] } }, required: ['sessionId', 'kind', 'provider', 'model'], additionalProperties: true },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, kind: { type: 'string', enum: ['adopted', 'rejected', 'decline-overridden'] }, provider: { type: 'string' }, model: { type: 'string' }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, precedent: { type: 'object', properties: { draft: { type: 'string' }, optimizedText: { type: 'string' }, judgeTotal: { type: 'number' } }, required: ['draft', 'optimizedText'], additionalProperties: true } }, required: ['sessionId', 'kind', 'provider', 'model'], additionalProperties: true },
           },
           strictCodec: {
             mode: 'strict',
             typeSymbol: '@yimiliya/dsh-prompt-optimizer/types#PromptMetricReportRequest',
             create: _reportMetric_parameter_0_strict,
-            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, kind: { type: 'string', enum: ['adopted', 'rejected', 'decline-overridden'] }, provider: { type: 'string' }, model: { type: 'string' }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] } }, required: ['sessionId', 'kind', 'provider', 'model'], additionalProperties: false },
+            jsonSchema: { type: 'object', properties: { sessionId: { type: 'string' }, kind: { type: 'string', enum: ['adopted', 'rejected', 'decline-overridden'] }, provider: { type: 'string' }, model: { type: 'string' }, tier: { type: 'string', enum: ['reasoning', 'local-small', 'standard'] }, precedent: { type: 'object', properties: { draft: { type: 'string' }, optimizedText: { type: 'string' }, judgeTotal: { type: 'number' } }, required: ['draft', 'optimizedText'], additionalProperties: false } }, required: ['sessionId', 'kind', 'provider', 'model'], additionalProperties: false },
           },
         },
       ],

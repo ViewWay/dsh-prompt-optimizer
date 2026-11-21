@@ -14,7 +14,9 @@ import type {
   PromptCandidatesResult,
   PromptClarification,
   PromptContextCheckResult,
+  PromptContextFixResult,
   PromptDistillResult,
+  PromptEvalRunResult,
   PromptLibraryEntry,
   PromptMetricsSummary,
   PromptOptimizeDirection,
@@ -57,6 +59,8 @@ interface RoundRequest {
   readonly force: boolean
   /** Interview answers folded into the round as first-class requirements; absent for a plain round. */
   readonly clarifications?: readonly PromptClarification[] | undefined
+  /** Acceptance criteria the goal interview compiled; the round must satisfy and restate them. */
+  readonly goalCriteria?: readonly string[] | undefined
   /** Pending queue item the round rewrites in place; absent for a draft round. */
   readonly queueItemId: QueueItemId | undefined
 }
@@ -159,15 +163,24 @@ function registerUi(ctx: Context): void {
     store.update((draft) => { Reflect.deleteProperty(draft, sessionId) })
   }
 
-  /** Report one user-decision metric; fire-and-forget — telemetry never blocks a click. */
+  /** Report one user-decision metric; fire-and-forget — telemetry never blocks a click. An adopted
+   * report may carry the round's materials as a same-domain precedent for later rounds. */
   const reportOutcome = (
     sessionId: SessionId,
     kind: 'adopted' | 'rejected' | 'decline-overridden',
     result: { readonly provider: string; readonly model: string; readonly tier?: string } | undefined,
+    precedent?: { readonly draft: string; readonly optimizedText: string; readonly judgeTotal?: number },
   ): void => {
     if (result === undefined) return
     void ctx.remote.promptOptimizer.reportMetric(
-      { sessionId, kind, provider: result.provider, model: result.model, ...(result.tier !== undefined ? { tier: result.tier as never } : {}) },
+      {
+        sessionId,
+        kind,
+        provider: result.provider,
+        model: result.model,
+        ...(result.tier !== undefined ? { tier: result.tier as never } : {}),
+        ...(kind === 'adopted' && precedent !== undefined ? { precedent } : {}),
+      },
       new AbortController().signal,
     ).catch((error: unknown) => {
       ctx.logger.warn(`prompt optimizer: reporting the ${kind} metric failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -191,6 +204,7 @@ function registerUi(ctx: Context): void {
         phase: 'running', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
         direction: state.direction,
         ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+        ...(state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? { goalCriteria: state.goalCriteria } : {}),
         ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
         result: undefined, error: undefined, apply: state.apply,
       }
@@ -209,6 +223,7 @@ function registerUi(ctx: Context): void {
             ...(state.direction !== undefined ? { direction: state.direction } : {}),
             ...(state.force ? { force: true } : {}),
             ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+            ...(state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? { goalCriteria: state.goalCriteria } : {}),
           },
           controller.signal,
         )
@@ -220,6 +235,7 @@ function registerUi(ctx: Context): void {
             phase: 'ready', draft: state.draft, previousAttempts: state.previousAttempts, role: result.value.role,
             direction: state.direction,
             ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+            ...(state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? { goalCriteria: state.goalCriteria } : {}),
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             result: result.value, error: undefined, apply: state.apply,
           }
@@ -232,6 +248,7 @@ function registerUi(ctx: Context): void {
             phase: 'failed', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
             direction: state.direction,
             ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+            ...(state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? { goalCriteria: state.goalCriteria } : {}),
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             result: undefined, error: message, apply: state.apply,
           }
@@ -257,6 +274,7 @@ function registerUi(ctx: Context): void {
         phase: 'running', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
         direction: state.direction,
         ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+        ...(state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? { goalCriteria: state.goalCriteria } : {}),
         ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
         result: undefined, error: undefined, apply: state.apply,
       }
@@ -273,6 +291,7 @@ function registerUi(ctx: Context): void {
             ...(state.direction !== undefined ? { direction: state.direction } : {}),
             ...(state.force ? { force: true } : {}),
             ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+            ...(state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? { goalCriteria: state.goalCriteria } : {}),
           },
           controller.signal,
         )
@@ -284,6 +303,7 @@ function registerUi(ctx: Context): void {
             phase: 'ready', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
             direction: state.direction,
             ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+            ...(state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? { goalCriteria: state.goalCriteria } : {}),
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             candidates: outcome.value.candidates,
             selectedCandidate: selected,
@@ -298,6 +318,7 @@ function registerUi(ctx: Context): void {
             phase: 'failed', draft: state.draft, previousAttempts: state.previousAttempts, role: state.role,
             direction: state.direction,
             ...(state.clarifications !== undefined && state.clarifications.length > 0 ? { clarifications: state.clarifications } : {}),
+            ...(state.goalCriteria !== undefined && state.goalCriteria.length > 0 ? { goalCriteria: state.goalCriteria } : {}),
             ...(state.queueItemId !== undefined ? { queueItemId: state.queueItemId } : {}),
             result: undefined, error: message, apply: state.apply,
           }
@@ -313,7 +334,7 @@ function registerUi(ctx: Context): void {
    * in the `interviewing` phase, and fall straight into a plain round when the
    * model finds nothing worth asking.
    */
-  const runInterview = (sessionId: SessionId, base: RoundRequest): void => {
+  const runInterview = (sessionId: SessionId, base: RoundRequest, mode?: 'goal'): void => {
     const round = rounds.get(sessionId)
     if (round !== undefined) round.controller.abort(new Error('superseded by a new round'))
     const controller = new AbortController()
@@ -323,7 +344,8 @@ function registerUi(ctx: Context): void {
         phase: 'interviewing', draft: base.draft, previousAttempts: base.previousAttempts, role: base.role,
         direction: base.direction,
         ...(base.queueItemId !== undefined ? { queueItemId: base.queueItemId } : {}),
-        questions: undefined, answers: {},
+        ...(mode === 'goal' ? { interviewMode: 'goal' } : {}),
+        questions: undefined, answers: {}, goalCriteria: undefined,
         result: undefined, error: undefined, apply: base.apply,
       }
     })
@@ -331,7 +353,7 @@ function registerUi(ctx: Context): void {
       try {
         const language = activeLanguageLabel(ctx.locale)
         const result = await ctx.remote.promptOptimizer.interview(
-          { sessionId, text: base.draft, ...(language !== undefined ? { language } : {}) },
+          { sessionId, text: base.draft, ...(language !== undefined ? { language } : {}), ...(mode === 'goal' ? { mode: 'goal' as const } : {}) },
           controller.signal,
         )
         if (!result.ok) throw new Error(result.error.message)
@@ -416,7 +438,7 @@ function registerUi(ctx: Context): void {
     const rejected = state.result === undefined ? state.previousAttempts : [...state.previousAttempts, state.result.optimizedText]
     runRound(sessionId, {
       draft: state.draft, previousAttempts: rejected, apply: state.apply ?? (() => {}), target,
-      role, direction: direction ?? state.direction, force: true, clarifications: state.clarifications, queueItemId: state.queueItemId,
+      role, direction: direction ?? state.direction, force: true, clarifications: state.clarifications, goalCriteria: state.goalCriteria, queueItemId: state.queueItemId,
     })
   }
 
@@ -434,7 +456,13 @@ function registerUi(ctx: Context): void {
     apply: (sessionId: SessionId): void => {
       const state = store.getSnapshot()[sessionId]
       if (state?.phase !== 'ready' || state.result === undefined) return
-      reportOutcome(sessionId, 'adopted', state.result)
+      const selected = state.selectedCandidate
+      const judgedTotal = selected === undefined ? undefined : state.candidates?.[selected]?.total
+      reportOutcome(sessionId, 'adopted', state.result, {
+        draft: state.draft,
+        optimizedText: state.result.optimizedText,
+        ...(judgedTotal !== undefined ? { judgeTotal: judgedTotal } : {}),
+      })
       if (state.queueItemId === undefined) {
         state.apply?.(state.result.optimizedText)
         dismiss(sessionId)
@@ -490,7 +518,7 @@ function registerUi(ctx: Context): void {
       }
       runCandidates(sessionId, {
         draft: state.draft, previousAttempts: state.previousAttempts, apply: state.apply ?? (() => {}), target: 'draft',
-        role: state.role, direction: state.direction, force: true, clarifications: state.clarifications, queueItemId: state.queueItemId,
+        role: state.role, direction: state.direction, force: true, clarifications: state.clarifications, goalCriteria: state.goalCriteria, queueItemId: state.queueItemId,
       })
     },
     selectCandidate: (sessionId: SessionId, index: number): void => {
@@ -520,6 +548,14 @@ function registerUi(ctx: Context): void {
       openPreview(sessionId)
       runInterview(sessionId, { draft: text, previousAttempts: [], apply, target: 'draft', role, direction: undefined, force: false, queueItemId: undefined })
     },
+    startGoalInterview: (sessionId: SessionId, text: string, apply: (text: string) => void): void => {
+      openPreview(sessionId)
+      runInterview(sessionId, { draft: text, previousAttempts: [], apply, target: 'draft', role: undefined, direction: undefined, force: false, queueItemId: undefined }, 'goal')
+    },
+    startGoalInterviewQueued: (sessionId: SessionId, itemId: QueueItemId, text: string): void => {
+      openPreview(sessionId)
+      runInterview(sessionId, { draft: text, previousAttempts: [], apply: () => {}, target: 'draft', role: undefined, direction: undefined, force: false, queueItemId: itemId }, 'goal')
+    },
     startInterviewQueued: (sessionId: SessionId, itemId: QueueItemId, text: string, role?: string): void => {
       openPreview(sessionId)
       runInterview(sessionId, { draft: text, previousAttempts: [], apply: () => {}, target: 'draft', role, direction: undefined, force: false, queueItemId: itemId })
@@ -543,16 +579,24 @@ function registerUi(ctx: Context): void {
       const state = store.getSnapshot()[sessionId]
       if (state?.phase !== 'interviewing' || state.questions === undefined) return
       if (state.queueItemId === undefined && state.apply === undefined) return
-      const clarifications: PromptClarification[] = state.questions
+      const pairs = state.questions
         .flatMap((question, index) => {
           const answer = (state.answers ?? {})[index]?.trim()
           return answer !== undefined && answer !== '' ? [{ question: question.text, answer }] : []
         })
+      // A goal interview's first question is the acceptance question: its answer
+      // compiles into authoritative criteria; the remaining answers stay clarifications.
+      const goal = state.interviewMode === 'goal'
+      const goalCriteria = goal && pairs.length > 0
+        ? [...new Set(pairs[0]!.answer.split(/[\n；;]/).map(line => line.trim()).filter(line => line !== ''))].slice(0, 4)
+        : undefined
+      const clarifications: PromptClarification[] = goal ? pairs.slice(1) : pairs
       // An interviewed draft always deserves the rewrite: force past the decline precheck.
       runRound(sessionId, {
         draft: state.draft, previousAttempts: state.previousAttempts, apply: state.apply ?? (() => {}), target: 'draft',
         role: state.role, direction: state.direction, force: true,
         ...(clarifications.length > 0 ? { clarifications } : {}),
+        ...(goalCriteria !== undefined && goalCriteria.length > 0 ? { goalCriteria } : {}),
         queueItemId: state.queueItemId,
       })
     },
@@ -610,11 +654,12 @@ function registerUi(ctx: Context): void {
       if (!result.ok) throw new Error(result.error.message)
       return result.value
     },
-    distillSkill: async (sessionId: SessionId, draft: string, optimized: string, clarifications?: readonly PromptClarification[], confirm?: boolean): Promise<PromptDistillResult> => {
+    distillSkill: async (sessionId: SessionId, draft: string, optimized: string, clarifications?: readonly PromptClarification[], evolveOf?: string, confirm?: boolean): Promise<PromptDistillResult> => {
       const result = await ctx.remote.promptOptimizer.distillSkill(
         {
           sessionId, draft, optimized,
           ...(clarifications !== undefined && clarifications.length > 0 ? { clarifications } : {}),
+          ...(evolveOf !== undefined && evolveOf !== '' ? { evolveOf } : {}),
           ...(confirm === true ? { confirm: true } : {}),
         },
         new AbortController().signal,
@@ -651,7 +696,29 @@ function registerUi(ctx: Context): void {
   /** Inject face the checkup panel registration serves. */
   const contextActions = {
     contextCheck: actions.contextCheck,
+    contextFix: async (
+      sessionId: SessionId,
+      kind: 'stale-skill-reference' | 'duplicate-skill' | 'duplicate-section',
+      subject: string,
+      detail: string,
+      confirm?: boolean,
+    ): Promise<PromptContextFixResult> => {
+      const result = await ctx.remote.promptOptimizer.contextFix(
+        { sessionId, kind, subject, detail, ...(confirm === true ? { confirm: true } : {}) },
+        new AbortController().signal,
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
+    },
     closeContext: (sessionId: SessionId): void => { closeContext(sessionId) },
+    runEvalPack: async (sessionId: SessionId, count?: number): Promise<PromptEvalRunResult> => {
+      const result = await ctx.remote.promptOptimizer.runEvalPack(
+        { sessionId, ...(count !== undefined ? { count } : {}) },
+        new AbortController().signal,
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value
+    },
   }
 
   const injected = { ...actions, hooks: { optimization: store } }

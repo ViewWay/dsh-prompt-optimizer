@@ -31,7 +31,7 @@ const SESSION = 'session-1' as SessionId
 const EMPTY_METRICS = {
   adopted: 0, rejected: 0, declined: 0, declineOverridden: 0,
   interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
-  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null, distills: 0,
+  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null, distills: 0, evolutions: 0, evalRuns: 0, evalWins: 0,
   adoptionRate: null, verifyPassRate: null, rows: 0,
 }
 const RESULT = {
@@ -388,6 +388,45 @@ it('rolls back the Remote when a slot registration fails', async () => {
   } finally { await ctx.fiber.dispose() }
 })
 
+it('runs the acceptance-first interview: mode goal rides in, the first answer compiles into goalCriteria', async () => {
+  const interview = vi.fn(async () => ({
+    ok: true as const,
+    value: {
+      questions: [
+        { text: '什么算完成？', options: ['脚本零退出；输出两列数据'] },
+        { text: '目标芯片型号？', options: ['STM32F103'] },
+      ],
+      provider: 'current-route',
+      model: 'current-model',
+    },
+  }))
+  const optimize = vi.fn(async () => ({ ok: true as const, value: RESULT }))
+  const b = await fixture(optimize, undefined, true, { interview })
+  try {
+    const fiber = b.ctx.plugin({ inject: [...inject], apply: ctx => mountPromptOptimizer(ctx, REMOTE) })
+    await fiber
+    const actions = actionsOf(b.ctx)
+
+    actions.startGoalInterview(SESSION, '帮我写解析脚本', () => {})
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('interviewing') })
+    await vi.waitFor(() => { expect(interview).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ sessionId: SESSION, text: '帮我写解析脚本', mode: 'goal' }), expect.any(AbortSignal),
+    ) })
+
+    actions.answerInterview(SESSION, 0, '脚本零退出；输出两列数据')
+    actions.answerInterview(SESSION, 1, 'STM32F103')
+    actions.submitInterview(SESSION)
+    await vi.waitFor(() => { expect(optimize).toHaveBeenCalledTimes(1) })
+    expect(optimize).toHaveBeenLastCalledWith(expect.objectContaining({
+      force: true,
+      goalCriteria: ['脚本零退出', '输出两列数据'],
+      clarifications: [{ question: '目标芯片型号？', answer: 'STM32F103' }],
+    }), expect.any(AbortSignal))
+    await vi.waitFor(() => { expect(stateOf(b.ctx)?.phase).toBe('ready') })
+    await fiber.dispose()
+  } finally { await b.ctx.fiber.dispose() }
+})
+
 it('interviews before optimizing: answered questions ride into the forced round', async () => {
   const interview = vi.fn(async () => ({
     ok: true as const,
@@ -566,7 +605,7 @@ it('distills a suggested round through the preview-then-confirm flow', async () 
     }), expect.any(AbortSignal))
     expect((preview as { pendingDefinition?: string }).pendingDefinition).toBeDefined()
 
-    await actions.distillSkill(SESSION, 'draft', '优化后的提示词', undefined, true)
+    await actions.distillSkill(SESSION, 'draft', '优化后的提示词', undefined, undefined, true)
     expect(distillSkill).toHaveBeenLastCalledWith(expect.objectContaining({ confirm: true }), expect.any(AbortSignal))
     await fiber.dispose()
   } finally { await b.ctx.fiber.dispose() }

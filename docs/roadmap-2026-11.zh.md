@@ -51,13 +51,55 @@
 
 已落地形态（分支 `feat/p2b-judge` 同支）：`contextCheck` RPC 确定性扫描（零 LLM）——系统提示经 `systemPrompt.assemble`（以会话 Agent 为 scope，降级到全局层）逐段计体量/占比/粗估 token（CJK 单字计）；技能经注册表按工作目录列出并深读前 16 个正文，做 Jaccard 重复检测、超长检测、相对文件引用存在性核对（按技能 resourceBase 目录）；五类发现（超长/重复段落、超长/重复技能、失效引用）。纯分析逻辑在 `src/context-check.ts`。输入行「体检」按钮 → composer 位 `ContextPanel` 报告卡。记忆子系统本 harness 未提供，未纳入。全量 check 304/304。
 
+### P5：上下文修复——context doctor 从诊断到收口（✅ 已落地，分支 `feat/v1.0.0-sprint`）
+
+五类发现中三类天然可修复。按「有无写回路径」分层，全部镜像 `distillSkill` 的两阶段（预览 → 确认写盘 + `.bak`）：
+
+- **技能侧（有 `fs.writeText` 路径）**
+  - `stale-skill-reference`：零 LLM 修复——从正文删除该引用行；技能目录内存在同扩展名近似文件名时同时提议改写目标路径。
+  - `duplicate-skill`：一轮模型草拟合并后的 SKILL.md（走 `parseSkillDefinition` 校验与 `SKILL_MAX_CHARS` 上限），预览全文，确认写盘；被并入方整份备份为 `.bak`，registry 即时反映新内容。
+  - `oversized-skill`：不自动修改（截断有语义风险），报告文案维持「细节移入引用文件」建议。
+- **系统提示侧（`systemPrompt.assemble` 只读，无写回 API）**
+  - `duplicate-section`：一轮模型草拟合并文本，报告卡提供「复制建议」按钮，明确标注 advisory——不越权写回。
+  - `oversized-section`：零 LLM，只给分段/裁剪点位建议，同样 advisory。
+- 线契约：新 `contextFix` RPC（session + finding 定位 + phase；预览返回 diff，确认执行），确认后自动重跑 `contextCheck` 验证该 finding 消失；typert 生成物锁步同步，controller 编解码测试把关。两个新元提示（技能合并、段落合并）入 `tests/golden.spec.ts` 字节级金标。
+- **验收标准**：① 三类可修复发现在 `ContextPanel` 报告卡有修复入口，预览 → 确认 → 写盘 → 重扫消失全链路有测试；② 每次写盘必有 `.bak`；③ 系统提示侧建议带 advisory 标注且无任何自动写回；④ 全量 check 通过。
+
+### P6：技能进化 + 采纳回流（P10 轻量版）（✅ 已落地，分支 `feat/v1.0.0-sprint`）——把 P2a/P2b/P3 连成环
+
+- **P6a 技能进化（`suggestEvolve`）**
+  - 新域 `prompt_optimizer_skill_links`：`distillSkill` 确认写盘时登记 `fingerprint → {name, targetDir}`（不存草稿内容，与 repeats 同界）。v0.8 只做指纹精确命中；领域级模糊匹配（domainPriors 键）留待后续。
+  - `noteRepeat` 命中且已有链接时，结果携带 `suggestEvolve {name}` 替代 `suggestDistill`；面板建议块文案变为「更新技能 <name>」。
+  - 进化流扩展 `distillSkill`：请求携带 `evolveOf`（既有定义 + 本轮 draft/optimized + 澄清），独立进化元提示（保留仍成立的约束、并入新差异、逐条变更说明），预览对照旧定义 → 确认覆盖 + `.bak`（confirm 路径已有备份语义）。
+  - 指标行 `evolved`；进化元提示入金标。
+- **P6b 采纳回流（同域先例）**
+  - 新域 `prompt_optimizer_precedents`（**存优化结果文本**，与 metrics「永不存内容」分立，README 隐私节须同步更新——同机同级于既有会话事件日志，不外发）：客户端 adopted 上报挂点扩展可选 `optimizedText`/`domain`/`judgeTotal` 字段（metrics 行仍零内容；字段在场时宿主另写先例），每域保留 ≤3 条按 recency + judgeTotal 淘汰。
+  - 注入：`optimizerUserInput` / `candidateUserInput` 增加可选「同域先例」块（仅 1 条最佳先例，标注为参考非模板）；local-small 档不注入（防上下文膨胀）。输入框架新增带先例形态，与不带先例各入金标一份。
+  - `precedents` 配置开关（默认开）；先例域行数有上限与清理，随开关整体停写。
+- **验收标准**：① 同指纹第三次优化且存在链接技能 → `suggestEvolve` 而非 `suggestDistill`；进化确认后 SKILL.md 为新版、`.bak` 为旧版；② adopted 后同域下一轮的输入框架含先例块（node 测试断言输入串），`precedents: false` 或 local-small 档时完全缺席；③ 先例域淘汰、上限、关闭抑制均有测试；④ 新元提示与新输入框架形态入金标；全量 check 通过。
+
+### P7：证据包（✅ 已落地，分支 `feat/v1.0.0-sprint`，随 1.0.0 发布）
+
+`src/eval-pack.ts` 内置 12 条领域交错标注样本（每域 2 条）；`runEvalPack` RPC 每样本跑「改写轮 + judge 轮（A=原始草稿 vs B=改写）」对比，judge 失败降级为未计分样本；`eval-run`/`eval-win` 指标行 + 设置页聚合行；体检面板内「证据包」一键对比卡；`systemPromptStale` 文案升级为指向重跑对比。
+
+### P8：验收先行模式（✅ 已落地，分支 `feat/v1.0.0-sprint`，随 1.0.0 发布）
+
+`mode: 'goal'` 面试变体（`goalInterviewSystemPrompt`：首问固定「什么算完成」，金标守护）；客户端「验收先行」触发；首问答案按换行/分号编译为 ≤4 条 `goalCriteria`，其余答案保持 clarifications；三轮系统提示均注入 goal 块（权威验收——改写必须满足并逐条重述）；随重跑/多候选保留。ZCode skill 产品化为跨仓分发渠道，不在本仓 npm 发版门内，另行立项。
+
 ## 不做
 
 - 通用 chat 类提示词优化（被内置工具吃死）
 - 盲评/git 版本化的重技能进化（个人用户用不起）
 - 为前沿模型用户做精细措辞调优（负收益证据最充分）
 
-## 验证状态
+## 验证状态（1.0.0 冲刺）
+
+- P5：`contextFix` RPC（预览→确认写盘 + `.bak` + 重扫）、技能侧可写边界（仅蒸馏目录内）、系统提示侧 advisory、技能合并/段落合并元提示入金标；`tests/context-fix.spec.ts` + `tests/context-fix-service.spec.ts`。
+- P6：`prompt_optimizer_skill_links` 域 + `suggestEvolve`（每三次命中阈值触发，替代 suggestDistill）；`distillSkill` 扩展 `evolveOf`（名称钉定 + 原地覆盖）；`prompt_optimizer_precedents` 域（每域 ≤3 按 judge 分+新近淘汰）+ adopted 上报携带先例材料 + `optimizerUserInput`/`candidateUserInput` 先例块（local-small 档不注入）；`precedents` 配置开关；`tests/skill-evolution.spec.ts` + `tests/precedents.spec.ts`。
+- P7/P8：`tests/eval-pack.spec.ts` + `tests/goal-mode.spec.ts`；金标扩至 9 系统提示 + 11 输入框架。
+- 全量 check 于 1.0.0 冲刺分支通过（node 254 / client 103）。
+
+## 验证状态（历史）
 
 - P0 落地于分支 `feat/model-aware-p0`（commit d86a6c3）：分挡矩阵、劝退矩阵、模板注入、service 劝退/force/档位路径、controller 编解码往返。
 - P1 落地于同一分支：node 工程 156/156（面试模板与解析、澄清注入与校验、interview 派发与记录、controller 透传）、client 工程 81/81（面试流转、澄清随重跑保留、面试面板渲染、`?` 触发）。

@@ -23,7 +23,7 @@ const SESSION = 'session-1' as SessionId
 const EMPTY_METRICS = {
   adopted: 0, rejected: 0, declined: 0, declineOverridden: 0,
   interviewQuestions: 0, clarifiedRounds: 0, verifyPassed: 0, verifyFailed: 0,
-  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null, distills: 0,
+  candidatesRounds: 0, judgedRounds: 0, judgeAverage: null, distills: 0, evolutions: 0, evalRuns: 0, evalWins: 0,
   adoptionRate: null, verifyPassRate: null, rows: 0,
 }
 const t: OptimizeButtonProps['t'] = (key, params) => {
@@ -873,6 +873,10 @@ describe('ContextPanel', () => {
       sessionId: SESSION,
       matched: new PromptContextPreview(SESSION),
       contextCheck: vi.fn(async () => REPORT),
+      contextFix: vi.fn(async () => ({
+        kind: 'stale-skill-reference', subject: 'ref-skill', advisory: false,
+        proposal: 'repaired body', targetFile: '/proj/.dsh/skills/ref-skill/SKILL.md',
+      })),
       closeContext: vi.fn(),
       t,
       ...overrides,
@@ -910,6 +914,44 @@ describe('ContextPanel', () => {
     screen.getByRole('button', { name: zh.contextRerun }).click()
     await waitFor(() => { expect(failing).toHaveBeenCalledTimes(2) })
   })
+
+  it('previews a repair from the finding row and confirms it, then rescans', async () => {
+    const finding = REPORT.findings[0]!
+    const contextFix = vi.fn(async () => ({
+      kind: 'stale-skill-reference', subject: 'ref-skill', advisory: false,
+      proposal: 'repaired body', targetFile: '/proj/.dsh/skills/ref-skill/SKILL.md',
+    }))
+    const contextCheck = vi.fn(async () => REPORT)
+    render(<ContextPanel {...contextProps({ contextCheck, contextFix })} />)
+    await waitFor(() => { expect(screen.getByTestId('context-findings').textContent).toContain('ref-skill') })
+
+    screen.getByTestId('context-fix-trigger:stale-skill-reference').click()
+    await waitFor(() => { expect(screen.getByTestId('context-fix-proposal').textContent).toBe('repaired body') })
+    expect(contextFix).toHaveBeenCalledExactlyOnceWith(SESSION, 'stale-skill-reference', finding.subject, finding.detail)
+
+    screen.getByTestId('context-fix-confirm').click()
+    await waitFor(() => { expect(contextFix).toHaveBeenCalledTimes(2) })
+    expect(contextFix).toHaveBeenLastCalledWith(SESSION, 'stale-skill-reference', finding.subject, finding.detail, true)
+    await waitFor(() => { expect(screen.getByTestId('context-fix-done').textContent).toBe(zh.contextFixDone) })
+    await waitFor(() => { expect(contextCheck).toHaveBeenCalledTimes(2) })
+  })
+
+  it('renders an advisory repair with copy-only actions and no confirm button', async () => {
+    const contextFix = vi.fn(async () => ({
+      kind: 'duplicate-section', subject: 'left ≈ right', advisory: true, proposal: 'merged section text',
+    }))
+    render(<ContextPanel {...contextProps({
+      contextCheck: vi.fn(async () => ({ ...REPORT, findings: [{ kind: 'duplicate-section', subject: 'left ≈ right', detail: 'word overlap 85%' }] })),
+      contextFix,
+    })} />)
+    await waitFor(() => { expect(screen.getByTestId('context-findings').textContent).toContain('left ≈ right') })
+
+    screen.getByTestId('context-fix-trigger:duplicate-section').click()
+    await waitFor(() => { expect(screen.getByTestId('context-fix-proposal').textContent).toBe('merged section text') })
+    expect(screen.getByTestId('context-fix').textContent).toContain(zh.contextFixAdvisory.slice(0, 6))
+    expect(screen.getByRole('button', { name: zh.contextFixCopy })).toBeTruthy()
+    expect(screen.queryByTestId('context-fix-confirm')).toBeNull()
+  })
 })
 
 describe('PreviewPanel distillation', () => {
@@ -937,11 +979,11 @@ describe('PreviewPanel distillation', () => {
     const review = await waitFor(() => screen.getByTestId('distill-review'))
     expect(review.textContent).toContain('/proj/.dsh/skills')
     expect(screen.getByTestId('distill-review-definition').textContent).toContain('name: uart-debugging')
-    expect(distillSkill).toHaveBeenCalledExactlyOnceWith(SESSION, '原始草稿', '优化后的提示词', [{ question: '芯片？', answer: 'STM32' }])
+    expect(distillSkill).toHaveBeenCalledExactlyOnceWith(SESSION, '原始草稿', '优化后的提示词', [{ question: '芯片？', answer: 'STM32' }], undefined)
 
     screen.getByTestId('distill-confirm').click()
     await waitFor(() => { expect(screen.getByTestId('distill-done').textContent).toContain('uart-debugging') })
-    expect(distillSkill).toHaveBeenLastCalledWith(SESSION, '原始草稿', '优化后的提示词', [{ question: '芯片？', answer: 'STM32' }], true)
+    expect(distillSkill).toHaveBeenLastCalledWith(SESSION, '原始草稿', '优化后的提示词', [{ question: '芯片？', answer: 'STM32' }], undefined, true)
   })
 
   it('discards a staged definition without writing', async () => {

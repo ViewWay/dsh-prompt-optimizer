@@ -34,6 +34,10 @@ export interface OptimizationState {
   readonly questions?: readonly PromptInterviewQuestion[] | undefined
   /** Answer per question index — a picked option or free text; present only while `interviewing`. */
   readonly answers?: Readonly<Record<number, string>> | undefined
+  /** `goal` when the running interview is acceptance-first; present only while `interviewing`. */
+  readonly interviewMode?: 'goal' | undefined
+  /** Acceptance criteria the goal interview's first answer compiled; carried into rounds like clarifications. */
+  readonly goalCriteria?: readonly string[] | undefined
   /** Interview answers carried into rounds and preserved across reruns; absent for a plain round. */
   readonly clarifications?: readonly PromptClarification[] | undefined
   /** Scored alternatives from a candidates round; present only in `ready` after such a round. */

@@ -83,3 +83,28 @@
   margin: 0;
   color: var(--dsw-alias-label-danger, inherit);
 }
+
+.fixBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-label-quaternary, transparent);
+  border-radius: var(--dsw-radius-lg, 8px);
+}
+
+.fixProposal {
+  margin: 0;
+  padding: 8px;
+  max-height: 200px;
+  overflow: auto;
+  font-family: var(--dsw-alias-font-mono, monospace);
+  font-size: 11px;
+  white-space: pre-wrap;
+  background: var(--dsw-specific-input-minor, transparent);
+}
+
+.fixActions {
+  display: flex;
+  gap: 8px;
+}

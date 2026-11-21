@@ -33,7 +33,7 @@ class RecordingAdapter extends LlmAdapter {
 
 const CONFIG: Config = {
   maxInputBytes: 1_000, maxOutputTokens: 64, timeoutMs: 1_000, verifyTimeoutMs: 2_000,
-  domainPriors: true, skillAware: false, skipCheck: false, metrics: false,
+  domainPriors: true, skillAware: false, skipCheck: false, metrics: false, precedents: false,
 }
 
 /** Committed optimizer LLM-request record payloads in `events`, oldest first. */
@@ -1654,14 +1654,19 @@ describe('PromptOptimizer distillation', () => {
     ctx.llm.registerAdapter(['current-route'], new ScriptedAdapter(scripts))
     const metrics = new Map<string, Row>()
     const repeats = new Map<string, Row>()
+    const tables = new Map<string, Map<string, Row>>([['metrics', metrics], ['repeats', repeats]])
     ctx.provide('storageDomain', {
       open: async () => ({
-        table: (name: string) => ({
-          get: (key: string) => (name === 'metrics' ? metrics : repeats).get(key),
-          put: async (key: string, value: Row) => { (name === 'metrics' ? metrics : repeats).set(key, value) },
-          delete: async (key: string) => (name === 'metrics' ? metrics : repeats).delete(key),
-          entries: () => (name === 'metrics' ? metrics : repeats).entries(),
-        }),
+        table: (name: string) => {
+          const table = tables.get(name) ?? new Map<string, Row>()
+          tables.set(name, table)
+          return {
+            get: (key: string) => table.get(key),
+            put: async (key: string, value: Row) => { table.set(key, value) },
+            delete: async (key: string) => table.delete(key),
+            entries: () => table.entries(),
+          }
+        },
       }),
     } as never)
     const writes: { path: string; content: string }[] = []

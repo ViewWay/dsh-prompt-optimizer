@@ -56,6 +56,8 @@ export interface PromptInterviewRequest {
    * example `中文`); absent keeps the draft's language.
    */
   readonly language?: string
+  /** `goal` pins the first question to the observable definition of done (acceptance-first interview). */
+  readonly mode?: 'goal'
 }
 
 /** Outcome of one interview round: the clarifying questions for the draft. */
@@ -149,6 +151,8 @@ export interface PromptOptimizeRequest {
   readonly force?: boolean
   /** Interview answers to fold into the rewrite as first-class requirements; absent for a plain round. */
   readonly clarifications?: readonly PromptClarification[]
+  /** Acceptance criteria the user defined up front (goal mode); the rewrite must satisfy and restate every one. */
+  readonly goalCriteria?: readonly string[]
 }
 
 /** One draft acceptance criterion the rewritten prompt should be judged against. */
@@ -189,6 +193,8 @@ export interface PromptOptimizeResult {
   readonly skipReason?: PromptSkipReason
   /** True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill. */
   readonly suggestDistill?: boolean
+  /** Present when this repeat draft already has a linked distilled skill: the panel then offers updating that skill instead of distilling a fresh one. */
+  readonly suggestEvolve?: { readonly name: string }
   /** Present when this Session's standing system prompt was optimized for a different model than the current route. */
   readonly systemPromptStale?: { readonly from: string; readonly to: string }
   /** Usage from the stream's `usage` chunk; absent until one arrives. */
@@ -246,6 +252,8 @@ export interface PromptCandidatesRequest {
   readonly force?: boolean
   /** Interview answers folded into every candidate as first-class requirements. */
   readonly clarifications?: readonly PromptClarification[]
+  /** Acceptance criteria the user defined up front (goal mode); every candidate must satisfy and restate them. */
+  readonly goalCriteria?: readonly string[]
 }
 
 /** Outcome of one N-candidate round. */
@@ -272,6 +280,8 @@ export interface PromptCandidatesResult {
   readonly skipReason?: PromptSkipReason
   /** True when this is at least the third optimization of the same normalized draft — the panel then offers distilling it into a skill. */
   readonly suggestDistill?: boolean
+  /** Present when this repeat draft already has a linked distilled skill: the panel then offers updating that skill instead of distilling a fresh one. */
+  readonly suggestEvolve?: { readonly name: string }
   /** Present when this Session's standing system prompt was optimized for a different model than the current route. */
   readonly systemPromptStale?: { readonly from: string; readonly to: string }
   /** Usage summed over every round the call dispatched; absent until one arrives. */
@@ -288,6 +298,8 @@ export interface PromptDistillRequest {
   readonly optimized: string
   /** Interview answers the round carried; they condition what the skill must preserve. */
   readonly clarifications?: readonly PromptClarification[]
+  /** Kebab-case name of an existing distilled skill this round evolves instead of distilling a fresh one; the confirm overwrites that skill's file. */
+  readonly evolveOf?: string
   /** True commits the pending preview for this session and writes the skill file; absent/false returns a preview without writing. */
   readonly confirm?: boolean
 }
@@ -348,6 +360,41 @@ export interface PromptContextCheckResult {
   readonly findings: readonly PromptContextFinding[]
 }
 
+/** Finding kinds the repair flow can propose a fix for. */
+export type PromptContextFixKind = 'stale-skill-reference' | 'duplicate-skill' | 'duplicate-section'
+
+/** Wire request to propose (or, with `confirm`, apply) one context-doctor repair. */
+export interface PromptContextFixRequest {
+  /** Session whose scoped context the finding came from. */
+  readonly sessionId: SessionId
+  /** Fixable finding kind the request targets. */
+  readonly kind: PromptContextFixKind
+  /** Finding subject exactly as the scan reported it. */
+  readonly subject: string
+  /** Finding detail exactly as the scan reported it. */
+  readonly detail: string
+  /** True commits the pending repair for this session and writes; absent/false returns a proposal without writing. */
+  readonly confirm?: boolean
+}
+
+/** Outcome of one repair: the proposal on previews, the fresh findings on confirms. */
+export interface PromptContextFixResult {
+  /** Fixable finding kind the repair addresses. */
+  readonly kind: PromptContextFixKind
+  /** Finding subject the repair addresses. */
+  readonly subject: string
+  /** True when no write path exists for this finding: the proposal is copy-only advice. */
+  readonly advisory: boolean
+  /** Proposed replacement text: the repaired skill body, the merged skill definition, or the merged section text. */
+  readonly proposal: string
+  /** Existing near-name file a stale reference could be rewritten to; present only when one plausibly matches. */
+  readonly replacement?: string
+  /** File a confirming call rewrites; present exactly when the repair is writable. */
+  readonly targetFile?: string
+  /** Fresh scan findings after a confirmed write; present only on confirm results. */
+  readonly findings?: readonly PromptContextFinding[]
+}
+
 /** Wire request to execute one acceptance criterion's check command in the Session's workspace. */
 export interface PromptVerifyRequest {
   /** Session whose workspace the command runs in; owns the verify log. */
@@ -404,6 +451,46 @@ export interface PromptLibraryEntry {
   readonly sourceSessionId: SessionId
 }
 
+/** Wire request to run the bundled evidence pack: rewrite and judge N fuzzy samples on the current route. */
+export interface PromptEvalRunRequest {
+  /** Session whose route the run dispatches on; owns the request log. */
+  readonly sessionId: SessionId
+  /** How many samples to run; default 3, allowed 1–6. */
+  readonly count?: number
+}
+
+/** One evidence-run sample's judged outcome. */
+export interface PromptEvalSampleOutcome {
+  /** Stable sample id the outcome belongs to. */
+  readonly id: string
+  /** Sample's domain bucket. */
+  readonly domain: string
+  /** Judge total (0–30) of the raw draft as a prompt; absent when the judge failed. */
+  readonly rawTotal?: number
+  /** Judge total of the optimized rewrite; absent when the judge failed. */
+  readonly optimizedTotal?: number
+  /** True when the optimized total beat the raw total; false on ties, losses, and failed judges. */
+  readonly improved: boolean
+}
+
+/** Outcome of one evidence-pack run. */
+export interface PromptEvalRunResult {
+  /** Per-sample outcomes in pack order. */
+  readonly samples: readonly PromptEvalSampleOutcome[]
+  /** Samples whose optimized total beat the raw total. */
+  readonly improved: number
+  /** Samples the judge scored on both sides. */
+  readonly judged: number
+  /** Exact provider route the run dispatched on. */
+  readonly provider: string
+  /** Exact model id the run dispatched on. */
+  readonly model: string
+  /** Capability tier of the route. */
+  readonly tier?: ModelTier
+  /** Usage summed over every round the run dispatched; absent until one arrives. */
+  readonly usage?: TokenUsage
+}
+
 /** Settings section this plugin's bundle page edits over the `prompt-optimizer` namespace. */
 export interface PromptOptimizerSettings {
   /** Role slug applied to every request carrying no explicit `role`; absent for no default. */
@@ -424,6 +511,9 @@ export type PromptMetricKind =
   | 'candidates-generated'
   | 'judge-score'
   | 'distilled'
+  | 'evolved'
+  | 'eval-run'
+  | 'eval-win'
   | 'adopted'
   | 'rejected'
   | 'decline-overridden'
@@ -440,6 +530,15 @@ export interface PromptMetricReportRequest {
   readonly model: string
   /** Capability tier of that route; absent stores `standard`. */
   readonly tier?: ModelTier
+  /** Materials of the adopted result, persisted as a same-domain precedent for later rounds; present only on adopted reports, and only while precedents are enabled. */
+  readonly precedent?: {
+    /** Complete draft text the adopted round optimized; the host derives the domain from it. */
+    readonly draft: string
+    /** Complete adopted optimized text to persist as the precedent. */
+    readonly optimizedText: string
+    /** Judge total (0–30) of the adopted candidate when the round was a judged candidates round. */
+    readonly judgeTotal?: number
+  }
 }
 
 /** Aggregate over the persisted metric rows; the client renders it as the local-metrics card. */
@@ -466,6 +565,12 @@ export interface PromptMetricsSummary {
   readonly judgedRounds: number
   /** Completed rounds distilled into a durable agent skill file. */
   readonly distills: number
+  /** Linked skills updated by an evolution round. */
+  readonly evolutions: number
+  /** Evidence-pack runs, each rewriting and judging a handful of bundled samples. */
+  readonly evalRuns: number
+  /** Evidence samples whose optimized rewrite beat the raw draft under the judge. */
+  readonly evalWins: number
   /** Mean total score (0–30) of the recommended candidate across judged rounds; null before any. */
   readonly judgeAverage: number | null
   /** `adopted / (adopted + rejected)` over the aggregated rows; null before either kind exists. */
