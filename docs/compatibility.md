@@ -17,6 +17,7 @@ Every publishable package declares `engines.dsh` — currently `>=0.2.1-rc.5 <0.
 ## Harness feature requirements
 
 - The inline **queue entry** depends on the harness plugin slot `conversation.input.dock.queue.item`, which no published harness release declares up to `0.2.1-rc.5`. Hosts without the slot skip the entry automatically (one `warn` in the log); the input-box button, preview panel and settings page are unaffected. Once a harness release ships the slot, the queue entry appears without reinstalling the plugin.
+- **Session record writes resolve through the host's own copy.** The installed app runtime bundles `@deepseek-ai/dsh-session` inside its app archive, and a profile whose dependency tree pulls any `@deepseek-ai/*` package (directly or through third-party plugins) carries a second, locally resolved copy. Appending a plugin record calls a `#`-private method whose V8 brand check rejects a session created by the other copy ("Receiver must be an instance of class Session"), so the host service resolves `appendPluginRecord` from the runtime bundle first and falls back to the peer import only where one shared copy exists (source checkouts, dev harness runs).
 
 ## Client tests
 

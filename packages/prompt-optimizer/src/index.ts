@@ -21,10 +21,12 @@ import { deadline, MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { createHash } from 'node:crypto'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { appendPluginRecord } from '@deepseek-ai/dsh-session'
+import { appendPluginRecord as appendPluginRecordPeer } from '@deepseek-ai/dsh-session'
 import type { Session } from '@deepseek-ai/dsh-session'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { PluginRecordMap, PluginRecordType, SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import type { FileSystem, FsDirEntry } from '@deepseek-ai/dsh-fs'
@@ -114,6 +116,60 @@ import type { SkillHint } from './skills.ts'
 import { screenVerifyCommand } from './verify-policy.ts'
 
 export type * from './types.ts'
+
+/**
+ * The installed app runtime bundles its own `@deepseek-ai/dsh-session` inside
+ * the app archive, while a profile plugin resolves the peer copy from the
+ * profile tree — and a profile whose dependencies pull the harness stack (for
+ * example via dsh-agent-teams) always carries that local copy, so plain Node
+ * resolution can never reach the runtime's class. The two copies are distinct
+ * classes, and appending a record calls a `#`-private method whose brand check
+ * rejects the foreign receiver ("Receiver must be an instance of class
+ * Session"). Resolve the writer from the bundle the runtime itself uses when
+ * reachable, and fall back to the peer import where host and plugin share one
+ * copy (source checkouts, dev harness runs).
+ */
+type PluginRecordWriter = <K extends Extract<keyof PluginRecordMap, PluginRecordType>>(
+  session: Session,
+  type: K,
+  data: NoInfer<PluginRecordMap[K]>,
+) => SessionSeq
+
+let sessionRecordWriter: PluginRecordWriter | undefined
+
+function appendPluginRecord<K extends Extract<keyof PluginRecordMap, PluginRecordType>>(
+  session: Session,
+  type: K,
+  data: NoInfer<PluginRecordMap[K]>,
+): SessionSeq {
+  const writer = sessionRecordWriter ?? resolveSessionRecordWriter()
+  return writer(session, type, data)
+}
+
+function resolveSessionRecordWriter(): PluginRecordWriter {
+  const bundled = bundledRuntimeRecordWriter()
+  sessionRecordWriter = bundled ?? (appendPluginRecordPeer as PluginRecordWriter)
+  return sessionRecordWriter
+}
+
+function bundledRuntimeRecordWriter(): PluginRecordWriter | undefined {
+  const resources = runtimeResourcesDir()
+  if (resources === undefined) return undefined
+  try {
+    const require = createRequire(join(resources, 'app.asar/dsh/node_modules/@deepseek-ai/dsh-session/package.json'))
+    const writer = (require('@deepseek-ai/dsh-session') as { appendPluginRecord?: PluginRecordWriter }).appendPluginRecord
+    return typeof writer === 'function' ? writer : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function runtimeResourcesDir(): string | undefined {
+  const declared = (process as { resourcesPath?: string }).resourcesPath
+  if (typeof declared === 'string' && declared !== '') return declared
+  const darwin = /(.+)\/Contents\/MacOS\/[^/]+$/.exec(process.execPath)
+  return darwin === null ? undefined : `${darwin[1]}/Contents/Resources`
+}
 
 declare module '@deepseek-ai/dsh-session/types' {
   // Plugin records, not SessionEventMap events: a host that does not share
