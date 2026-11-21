@@ -9,6 +9,10 @@ on:
 
 permissions:
   contents: read
+  # npm provenance / trusted publishing: the publish step requests an OIDC
+  # id token; without this grant pnpm skips provenance (a warn today, a
+  # hard requirement the day npm enforces trusted publishing).
+  id-token: write
 
 jobs:
   publish:
