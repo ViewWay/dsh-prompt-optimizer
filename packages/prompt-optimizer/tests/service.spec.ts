@@ -303,13 +303,26 @@ describe('PromptOptimizer.optimize', () => {
       .rejects.toThrow(/provider and model must be supplied together/)
   })
 
-  it('rejects a missing session, empty draft, and oversized draft before logging or dispatch', async () => {
+  it('optimizes without a live session through a configured route, skipping session records', async () => {
+    const { ctx, adapter, sessionId } = await withAdapter(
+      envelope('rewritten', []),
+      { ...CONFIG, provider: 'current-route', model: 'current-model' },
+    )
+    const session = ctx.sessions.get(sessionId)!
+
+    const result = await ctx.promptOptimizer.optimize(
+      { sessionId: SessionId('missing'), text: 'draft' }, new AbortController().signal,
+    )
+
+    expect(result.optimizedText).toBe('rewritten')
+    expect(adapter.requests).toHaveLength(1)
+    expect(llmRequests(session.snapshotEvents())).toHaveLength(0)
+  })
+
+  it('rejects an empty draft and an oversized draft before logging or dispatch', async () => {
     const { ctx, adapter, sessionId } = await withAdapter(envelope('rewritten', []))
     const session = ctx.sessions.get(sessionId)!
 
-    await expect(ctx.promptOptimizer.optimize(
-      { sessionId: SessionId('missing'), text: 'draft' }, new AbortController().signal,
-    )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_SESSION_UNAVAILABLE' })
     await expect(ctx.promptOptimizer.optimize(
       { sessionId, text: '  ' }, new AbortController().signal,
     )).rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_EMPTY_DRAFT' })

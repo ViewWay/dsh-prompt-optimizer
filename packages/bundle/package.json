@@ -11,7 +11,7 @@
   "bugs": "https://github.com/ViewWay/dsh-prompt-optimizer/issues",
   "type": "module",
   "engines": {
-    "dsh": ">=0.2.1-rc.5 <0.3.0"
+    "dsh": ">=0.2.2-rc.5 <0.3.0"
   },
   "dependencies": {
     "@yimiliya/dsh-api-prompt-optimizer": "workspace:*",

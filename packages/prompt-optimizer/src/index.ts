@@ -138,18 +138,61 @@ type PluginRecordWriter = <K extends Extract<keyof PluginRecordMap, PluginRecord
 let sessionRecordWriter: PluginRecordWriter | undefined
 
 function appendPluginRecord<K extends Extract<keyof PluginRecordMap, PluginRecordType>>(
-  session: Session,
+  session: Session | undefined,
   type: K,
   data: NoInfer<PluginRecordMap[K]>,
-): SessionSeq {
-  const writer = sessionRecordWriter ?? resolveSessionRecordWriter()
-  return writer(session, type, data)
+): SessionSeq | undefined {
+  if (session === undefined) return undefined
+  const candidates: PluginRecordWriter[] = sessionRecordWriter === undefined
+    ? recordWriterCandidates()
+    : [sessionRecordWriter, ...recordWriterCandidates().filter(writer => writer !== sessionRecordWriter)]
+  let brandFailure: unknown
+  for (const writer of candidates) {
+    try {
+      const seq = writer(session, type, data)
+      sessionRecordWriter = writer
+      return seq
+    } catch (failure) {
+      // A writer from a stale dsh-session copy fails the Session brand check;
+      // drop the cache and let the next resolution candidate try.
+      if (!isSessionBrandFailure(failure)) throw failure
+      brandFailure ??= failure
+      sessionRecordWriter = undefined
+    }
+  }
+  throw brandFailure
 }
 
-function resolveSessionRecordWriter(): PluginRecordWriter {
+function isSessionBrandFailure(failure: unknown): boolean {
+  return failure instanceof Error && failure.message.includes('Receiver must be an instance of class')
+}
+
+function recordWriterCandidates(): PluginRecordWriter[] {
+  const candidates: PluginRecordWriter[] = []
   const bundled = bundledRuntimeRecordWriter()
-  sessionRecordWriter = bundled ?? (appendPluginRecordPeer as PluginRecordWriter)
-  return sessionRecordWriter
+  if (bundled !== undefined) candidates.push(bundled)
+  const entry = entryRuntimeRecordWriter()
+  if (entry !== undefined) candidates.push(entry)
+  candidates.push(appendPluginRecordPeer as PluginRecordWriter)
+  return candidates
+}
+
+/**
+ * The dev CLI (`node …/apps/cli/lib/bin.js`) and an npm-installed CLI both run
+ * the runtime's own module graph, so a require rooted at the entry script
+ * reaches the same in-process dsh-session copy that created the runtime's
+ * Session instances — the peer import in a plugin profile does not.
+ */
+function entryRuntimeRecordWriter(): PluginRecordWriter | undefined {
+  const entry = process.argv[1]
+  if (typeof entry !== 'string' || entry === '') return undefined
+  try {
+    const require = createRequire(entry)
+    const writer = (require('@deepseek-ai/dsh-session') as { appendPluginRecord?: PluginRecordWriter }).appendPluginRecord
+    return typeof writer === 'function' ? writer : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function bundledRuntimeRecordWriter(): PluginRecordWriter | undefined {
@@ -700,11 +743,27 @@ function defaultModelRoute(ctx: Context): { provider: string; model: string } | 
  * @returns the selected provider/model pair, or undefined when neither the
  * registry nor the `modelSelection` unit is composed.
  */
-function sessionSelectionRoute(ctx: Context, session: Session): { provider: string; model: string } | undefined {
+/** Provider/model pair as recorded by the agent-loop's `modelSelection` projection. */
+interface ModelSelectionRoute { provider: string; model: string }
+
+/** State of the agent-loop's `modelSelection` projection (map entry typed outside this tree). */
+interface ModelSelectionProjectionState {
+  pending?: ModelSelectionRoute | null
+  lastUsed?: ModelSelectionRoute | null
+}
+
+/** State of the agent-loop's `inbox` projection: messages pending per delivery lane. */
+interface InboxProjectionState {
+  'next-turn': readonly { readonly content: readonly ContentBlock[] }[]
+  'next-step': readonly { readonly content: readonly ContentBlock[] }[]
+}
+
+function sessionSelectionRoute(ctx: Context, session: Session | undefined): { provider: string; model: string } | undefined {
+  if (session === undefined) return undefined
   const projections = ctx.get('sessionProjections')
   if (projections === undefined) return undefined
-  const state = projections.stateOf(session, 'modelSelection')
-  const selection = state === undefined ? undefined : state.pending ?? state.lastUsed
+  const state = projections.stateOf(session, 'modelSelection') as ModelSelectionProjectionState | null | undefined
+  const selection = state?.pending ?? state?.lastUsed
   if (selection === undefined || selection === null) return undefined
   return { provider: selection.provider, model: selection.model }
 }
@@ -726,7 +785,7 @@ function sessionSelectionRoute(ctx: Context, session: Session): { provider: stri
 function resolveRoute(
   ctx: Context,
   config: Config,
-  session: Session,
+  session: Session | undefined,
   defaultRoute: { provider: string; model: string } | undefined,
 ): { provider: string; model: string } {
   if (config.provider !== undefined && config.model !== undefined) {
@@ -736,7 +795,7 @@ function resolveRoute(
   if (selection !== undefined) {
     return selection
   }
-  const header = session.requestHeader()?.config
+  const header = session?.requestHeader()?.config
   if (header !== undefined) {
     return { provider: header.provider, model: header.model }
   }
@@ -970,7 +1029,7 @@ export default class PromptOptimizer extends Service {
    * @throws when the deadline or cancellation fires, or the stream ends in an
    * operational failure.
    */
-  private async dispatchRound(session: Session, options: {
+  private async dispatchRound(session: Session | undefined, options: {
     readonly route: { readonly provider: string; readonly model: string }
     readonly target: PromptOptimizeTarget
     readonly round: number
@@ -1045,15 +1104,12 @@ export default class PromptOptimizer extends Service {
    * @param request - session, draft text, rejected earlier results, and target.
    * @param signal - caller cancellation.
    * @returns the parsed optimization result with its exact route.
-   * @throws when the session is gone, bounds fail, the deadline or
+   * @throws bounds fail, the deadline or
    * cancellation fires, or a stream ends in an operational failure.
    */
   async optimize(request: PromptOptimizeRequest, signal: AbortSignal): Promise<PromptOptimizeResult> {
     signal.throwIfAborted()
     const session = this.ctx.sessions.get(request.sessionId)
-    if (session === undefined) {
-      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
-    }
     const inputBytes = Buffer.byteLength(request.text, 'utf8')
     if (request.text.trim() === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_DRAFT', 'prompt-optimizer: draft is empty')
@@ -1222,16 +1278,13 @@ export default class PromptOptimizer extends Service {
    * @param request - session, draft text, candidate count, and round conditioners.
    * @param signal - caller cancellation.
    * @returns the scored candidates with the recommended index and exact route.
-   * @throws when the session is gone, bounds fail, the decline precheck fires
+   * @throws bounds fail, the decline precheck fires
    * without `force`, a rewrite round returns empty, or the deadline or
    * cancellation fires.
    */
   async optimizeCandidates(request: PromptCandidatesRequest, signal: AbortSignal): Promise<PromptCandidatesResult> {
     signal.throwIfAborted()
     const session = this.ctx.sessions.get(request.sessionId)
-    if (session === undefined) {
-      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
-    }
     const inputBytes = Buffer.byteLength(request.text, 'utf8')
     if (request.text.trim() === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_DRAFT', 'prompt-optimizer: draft is empty')
@@ -1436,15 +1489,12 @@ export default class PromptOptimizer extends Service {
    * @param request - session and optional sample count (default 3, allowed 1–6).
    * @param signal - caller cancellation.
    * @returns per-sample outcomes with the improved and judged totals.
-   * @throws when the session is gone, the count is out of bounds, or a
+   * @throws the count is out of bounds, or a
    * rewrite round fails.
    */
   async runEvalPack(request: PromptEvalRunRequest, signal: AbortSignal): Promise<PromptEvalRunResult> {
     signal.throwIfAborted()
     const session = this.ctx.sessions.get(request.sessionId)
-    if (session === undefined) {
-      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
-    }
     const count = request.count ?? EVAL_DEFAULT_SAMPLES
     if (!Number.isInteger(count) || count < 1 || count > EVAL_MAX_SAMPLES) {
       fail('PROMPT_OPTIMIZER_BAD_EVAL_COUNT', `prompt-optimizer: count must be an integer between 1 and ${String(EVAL_MAX_SAMPLES)}`)
@@ -1549,15 +1599,12 @@ export default class PromptOptimizer extends Service {
    * @param signal - caller cancellation.
    * @returns the parsed questions with the exact route that produced them;
    * empty questions mean the model found nothing worth asking.
-   * @throws when the session is gone, bounds fail, the deadline or
+   * @throws bounds fail, the deadline or
    * cancellation fires, or the stream ends in an operational failure.
    */
   async interview(request: PromptInterviewRequest, signal: AbortSignal): Promise<PromptInterviewResult> {
     signal.throwIfAborted()
     const session = this.ctx.sessions.get(request.sessionId)
-    if (session === undefined) {
-      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
-    }
     const inputBytes = Buffer.byteLength(request.text, 'utf8')
     if (request.text.trim() === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_DRAFT', 'prompt-optimizer: draft is empty')
@@ -1807,7 +1854,7 @@ export default class PromptOptimizer extends Service {
    * @param signal - caller cancellation.
    * @returns the rewritten role's slug, parsed name, byte size, and — for a
    * preview — the pending definition itself.
-   * @throws when the session is gone, `rolesDir` is unset (the bundled
+   * @throws `rolesDir` is unset (the bundled
    * library is read-only), the role is not listed, the model round fails, a
    * confirm arrives without a pending preview, or the produced definition
    * fails validation.
@@ -1815,9 +1862,6 @@ export default class PromptOptimizer extends Service {
   async evolveRole(request: PromptRoleEvolveRequest, signal: AbortSignal): Promise<PromptRoleEvolveResult> {
     signal.throwIfAborted()
     const session = this.ctx.sessions.get(request.sessionId)
-    if (session === undefined) {
-      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
-    }
     if (this.config.rolesDir === undefined) {
       fail('PROMPT_OPTIMIZER_ROLE_EVOLVE_READONLY', 'prompt-optimizer: the bundled role library is read-only; point rolesDir at your own directory of role definitions to evolve them')
     }
@@ -1919,9 +1963,10 @@ export default class PromptOptimizer extends Service {
    * @returns concatenated queued text; empty when no projection or no text
    * messages are pending.
    */
-  private inboxText(session: Session): string {
-    const inbox = this.ctx.get('sessionProjections')?.stateOf(session, 'inbox')
-    if (inbox === undefined) return ''
+  private inboxText(session: Session | undefined): string {
+    if (session === undefined) return ''
+    const inbox = this.ctx.get('sessionProjections')?.stateOf(session, 'inbox') as InboxProjectionState | null | undefined
+    if (inbox == null) return ''
     return [...inbox['next-turn'], ...inbox['next-step']]
       .flatMap(message => message.content)
       .filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
@@ -1944,13 +1989,13 @@ export default class PromptOptimizer extends Service {
    * @throws when `skillAware` is on but no skill registry is composed, or the
    * registry listing fails.
    */
-  private async resolveSkillHints(session: Session, context: string, signal: AbortSignal): Promise<readonly SkillHint[]> {
+  private async resolveSkillHints(session: Session | undefined, context: string, signal: AbortSignal): Promise<readonly SkillHint[]> {
     if (!this.config.skillAware) return []
     const registry = this.ctx.get('skills')
     if (registry === undefined) {
       fail('PROMPT_OPTIMIZER_NO_SKILLS', 'prompt-optimizer: skillAware is enabled but no skill registry is composed; mount @deepseek-ai/dsh-skill or set skillAware: false')
     }
-    const cwd = this.ctx.get('workingDirectory')?.get(session)
+    const cwd = session === undefined ? undefined : this.ctx.get('workingDirectory')?.get(session)
     let skills: readonly SkillSummary[]
     try {
       skills = await registry.list({ ...(cwd !== undefined ? { cwd } : {}), signal })
@@ -2334,10 +2379,11 @@ export default class PromptOptimizer extends Service {
    * @param draft - complete draft text the round optimized.
    * @returns the suggestion flags to spread into the round's result; empty for a non-threshold round.
    */
-  private async repeatSuggestions(session: Session, draft: string): Promise<{
+  private async repeatSuggestions(session: Session | undefined, draft: string): Promise<{
     readonly suggestDistill?: true
     readonly suggestEvolve?: { readonly name: string }
   }> {
+    if (session === undefined) return {}
     if (!(await this.noteRepeat(session, draft))) return {}
     const link = await this.lookupSkillLink(draftFingerprint(draft))
     return link === undefined ? { suggestDistill: true } : { suggestEvolve: { name: link.name } }
@@ -2461,8 +2507,8 @@ export default class PromptOptimizer extends Service {
    * @param route - exact route the tuning round ran on.
    * @param tier - capability tier of that route.
    */
-  private async recordSystemTrack(session: Session, route: { readonly provider: string; readonly model: string }, tier: ModelTier): Promise<void> {
-    if (!this.config.metrics) return
+  private async recordSystemTrack(session: Session | undefined, route: { readonly provider: string; readonly model: string }, tier: ModelTier): Promise<void> {
+    if (!this.config.metrics || session === undefined) return
     try {
       const table = (await this.openSystemTracks()).table('tracks')
       const tracked = [...table.entries()]
@@ -2497,10 +2543,10 @@ export default class PromptOptimizer extends Service {
    * @param route - route the current round resolved.
    * @returns the notice object to spread into the round's result.
    */
-  private async systemPromptStaleness(session: Session, route: { readonly provider: string; readonly model: string }): Promise<{
+  private async systemPromptStaleness(session: Session | undefined, route: { readonly provider: string; readonly model: string }): Promise<{
     readonly systemPromptStale?: { readonly from: string; readonly to: string }
   }> {
-    if (!this.config.metrics) return {}
+    if (!this.config.metrics || session === undefined) return {}
     try {
       const table = (await this.openSystemTracks()).table('tracks')
       const latest = [...table.entries()]
@@ -2526,11 +2572,11 @@ export default class PromptOptimizer extends Service {
    * @returns the absolute target directory.
    * @throws when neither a configured directory nor a session working directory exists.
    */
-  private distillTargetDir(session: Session): string {
+  private distillTargetDir(session: Session | undefined): string {
     if (this.config.distillDir !== undefined) {
       return this.config.distillDir
     }
-    const cwd = this.ctx.get('workingDirectory')?.get(session)
+    const cwd = session === undefined ? undefined : this.ctx.get('workingDirectory')?.get(session)
     if (cwd === undefined) {
       fail('PROMPT_OPTIMIZER_NO_DISTILL_TARGET', 'prompt-optimizer: no distill target; configure distillDir, or run inside a session that owns a working directory')
     }
@@ -2939,14 +2985,11 @@ export default class PromptOptimizer extends Service {
    * @param request - producing session, the round's texts, answers, and the phase selector.
    * @param signal - caller cancellation.
    * @returns the distilled skill's name, description, byte size, and target directory — plus the pending definition on previews.
-   * @throws when the session is gone, the texts fail bounds, no target directory resolves, the model round fails, or the produced definition fails validation.
+   * @throws the texts fail bounds, no target directory resolves, the model round fails, or the produced definition fails validation.
    */
   async distillSkill(request: PromptDistillRequest, signal: AbortSignal): Promise<PromptDistillResult> {
     signal.throwIfAborted()
     const session = this.ctx.sessions.get(request.sessionId)
-    if (session === undefined) {
-      fail('PROMPT_OPTIMIZER_SESSION_UNAVAILABLE', 'prompt-optimizer: no live session backs this draft yet; send one message first')
-    }
     if (request.draft.trim() === '' || request.optimized.trim() === '') {
       fail('PROMPT_OPTIMIZER_EMPTY_TEXT', 'prompt-optimizer: a distillation needs the round\'s non-empty draft and optimized text')
     }

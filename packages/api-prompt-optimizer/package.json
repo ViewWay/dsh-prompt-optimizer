@@ -11,7 +11,7 @@
   "bugs": "https://github.com/ViewWay/dsh-prompt-optimizer/issues",
   "type": "module",
   "engines": {
-    "dsh": ">=0.2.1-rc.5 <0.3.0"
+    "dsh": ">=0.2.2-rc.5 <0.3.0"
   },
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -45,13 +45,13 @@
   },
   "peerDependencies": {
     "@yimiliya/dsh-prompt-optimizer": "workspace:*",
-    "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5"
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.5"
   },
   "devDependencies": {
     "@yimiliya/dsh-prompt-optimizer": "workspace:*",
-    "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.5",
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.5",
     "@types/node": "^24"
   }
 }

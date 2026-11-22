@@ -112,13 +112,13 @@ describe('PromptOptimizer.runEvalPack', () => {
     expect(result.judged).toBe(0)
   })
 
-  it('rejects an out-of-range count and a missing session before any dispatch', async () => {
+  it('rejects an out-of-range count before any dispatch, and a missing session fails at route resolution', async () => {
     const { ctx, sessionId } = await withEvalPack()
     await expect(ctx.promptOptimizer.runEvalPack({ sessionId, count: 7 }, new AbortController().signal))
       .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_BAD_EVAL_COUNT' })
     await expect(ctx.promptOptimizer.runEvalPack({ sessionId, count: 0 }, new AbortController().signal))
       .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_BAD_EVAL_COUNT' })
     await expect(ctx.promptOptimizer.runEvalPack({ sessionId: SessionId('gone') }, new AbortController().signal))
-      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_SESSION_UNAVAILABLE' })
+      .rejects.toMatchObject({ code: 'PROMPT_OPTIMIZER_NO_ROUTE' })
   })
 })
