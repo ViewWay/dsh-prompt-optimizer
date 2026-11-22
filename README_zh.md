@@ -65,7 +65,7 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 
 ## 你会得到什么
 
-### 角色库 — 164 个角色，改写前先推荐
+### 角色库 — 168 个角色，改写前先推荐
 
 `<slug>.md` 角色文件随包分发，`rolesDir` 未配置时默认启用：按需列出角色、按草稿推荐、指定角色重跑，并在设置页设默认角色。**产出语言跟随 Agent 界面语言**——中文界面出中文提示词，English 界面出英文，代码标识符、路径与命令保持原样。
 

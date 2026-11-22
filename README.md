@@ -65,7 +65,7 @@ dsh plugin --profile web add packages/bundle/yimiliya-dsh-prompt-optimizer-bundl
 
 ## What you get
 
-### Role library — 164 roles, recommended before every rewrite
+### Role library — 168 roles, recommended before every rewrite
 
 `<slug>.md` files ship inside the package and are used whenever `rolesDir` is unset: list roles on demand, recommend by draft, re-run with an explicit role, and set a default role in the settings page. **Output language follows the agent UI language** — a Chinese interface yields Chinese prompts, English yields English, while code identifiers, paths and commands stay verbatim.
 
